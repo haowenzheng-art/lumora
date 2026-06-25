@@ -1,0 +1,76 @@
+# Miscellaneous
+*.class
+*.log
+*.pyc
+*.swp
+.DS_Store
+.atom/
+.build/
+.buildlog/
+.history
+.svn/
+.swiftpm/
+migrate_working_dir/
+
+# IntelliJ related
+*.iml
+*.ipr
+*.iws
+.idea/
+
+# The .vscode folder contains launch configuration and tasks you configure in
+# VS Code which you may wish to be included in version control, so this line
+# is commented out by default.
+#.vscode/
+
+# Flutter/Dart/Pub related
+**/doc/api/
+**/ios/Flutter/.last_build_id
+.dart_tool/
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+/build/
+/coverage/
+
+# Symbolication related
+app.*.symbols
+
+# Obfuscation related
+app.*.map.json
+
+# Android Studio will place build artifacts here
+/android/app/debug
+/android/app/profile
+/android/app/release
+
+# ============================================================
+# Lumora 项目敏感/内部文件
+# ============================================================
+
+# API key 文件（绝对不能提交）
+agnes.txt
+lumora.txt
+*.env
+.env
+secrets.json
+
+# Claude Code 本地配置与 memory（私有，不公开）
+.claude/
+
+# 内部工作报告（开发过程产物，不入仓库）
+WORK_REPORT_*.md
+v0.2-summary.md
+
+# 旧 Python CLI 缓存
+__pycache__/
+*.pyc
+src/lumora/__pycache__/
+
+# 截图占位目录（用户后续补充实际图片）
+# docs/screenshots/ 本身可以提交，但占位 .placeholder 不必
+docs/screenshots/.placeholder
+
+# 测试产物（e2e 视频等，运行时生成）
+test/_e2e_video.mp4
+test/*.mp4

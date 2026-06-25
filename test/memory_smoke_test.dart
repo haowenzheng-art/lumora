@@ -1,0 +1,355 @@
+// Lumora 记忆系统端到端烟雾测试
+//
+// 跑法：
+//   cd Lumora
+//   flutter test test/memory_smoke_test.dart
+//
+// 测什么：
+//   - MemoryStore 三层文件读写
+//   - Memory.md 解析为 seed events
+//   - MemoryRetriever tag 预筛（不调 LLM rerank）
+//   - 深度模式分类
+//   - MemoryDecay dormant 标记
+//
+// 不测（必须人工目视）：
+//   - LLM 抽取出来的事件质量 / profile_patch 是否像人话
+//   - LLM rerank 选的 5 条是不是"最自然联想"
+//   - UI 视觉 / 视频淡入 / 动画流畅度
+
+import 'dart:io';
+
+import 'package:flutter_test/flutter_test.dart';
+
+import 'package:lumora/memory/decay.dart';
+import 'package:lumora/memory/memory_service.dart';
+import 'package:lumora/memory/migrate.dart';
+import 'package:lumora/memory/retriever.dart';
+import 'package:lumora/memory/store.dart';
+import 'package:lumora/memory/types.dart';
+import 'package:lumora/prompt.dart';
+
+void main() {
+  late Directory tmp;
+
+  setUp(() async {
+    tmp = await Directory.systemTemp.createTemp('lumora_smoke_');
+  });
+
+  tearDown(() async {
+    try {
+      await tmp.delete(recursive: true);
+    } catch (_) {}
+  });
+
+  test('[1/5] MemoryStore 三层文件读写', () async {
+    final store = MemoryStore('test_spirit', baseDirOverride: tmp);
+
+    await store.appendMessage(RawMessage(role: 'user', content: '你好', ts: 1));
+    await store.appendMessage(RawMessage(role: 'assistant', content: '嗯', ts: 2));
+    final msgs = await store.readAllMessages();
+    expect(msgs.length, 2, reason: 'messages.jsonl 读回 2 条');
+    expect(msgs[0].role, 'user');
+    expect(msgs[0].content, '你好');
+    expect(await store.messagesCount(), 2);
+
+    final e = MemoryEvent(
+      id: MemoryStore.newId(),
+      source: EventSource.derived,
+      date: '2026-06-24',
+      title: '测试事件',
+      summary: '这是一条测试事件',
+      tags: ['测试', '烟雾'],
+      weight: '中',
+      createdAt: DateTime.now().millisecondsSinceEpoch,
+      lastUsedAt: 0,
+      dormant: false,
+      permadormant: false,
+    );
+    await store.appendEvent(e);
+    final allEvents = await store.readAllEvents();
+    expect(allEvents.length, 1);
+    expect(allEvents.first.title, '测试事件');
+
+    await store.updateEvents({e.id: e.copyWith(weight: '高')});
+    final after = await store.readAllEvents();
+    expect(after.first.weight, '高', reason: 'updateEvents 改 weight 成功');
+
+    await store.writeProfile('一段印象');
+    expect(await store.readProfile(), '一段印象');
+
+    await store.patchMeta({'x': 1});
+    await store.patchMeta({'y': 2});
+    final meta = await store.readMeta();
+    expect(meta['x'], 1);
+    expect(meta['y'], 2);
+  });
+
+  test('[2/5] Memory.md 解析为 seed events', () {
+    const md = '''
+# Memory · 测试
+
+---
+
+## 2024-12-01 · 雪天围巾
+
+冬天大雪那天，我把围巾给他。后来他弄丢了。
+
+tags: 地铁、雪、围巾
+weight: 高
+
+---
+
+## 2023-08-15 · 海底捞
+
+我们一起去海底捞吃番茄锅。
+
+tags: 火锅、海底捞
+weight: 中
+
+---
+
+## 不规则标题没分隔符
+
+这条应该被跳过。
+''';
+    final events = MemoryMigrator.parseMemoryMd(md);
+    expect(events.length, 2, reason: '只解析出 2 条合法事件（不规则的被跳过）');
+    expect(events.every((e) => e.source == EventSource.seed), true);
+    expect(events.every((e) => e.permadormant == true), true);
+    expect(events[0].weight, '高');
+    expect(events[1].weight, '中');
+    expect(events[0].tags.contains('围巾'), true);
+  });
+
+  test('[3/5] Retriever tag 预筛（不触发 LLM rerank）', () async {
+    final store = MemoryStore('xiaoyu', baseDirOverride: tmp);
+    final now = DateTime.now().millisecondsSinceEpoch;
+    await store.appendEvents([
+      MemoryEvent(
+        id: MemoryStore.newId(),
+        source: EventSource.seed,
+        date: '2024-12-01',
+        title: '雪天地铁围巾',
+        summary: '冬天大雪那天我把围巾给他',
+        tags: ['地铁', '雪', '围巾'],
+        weight: '高',
+        createdAt: now,
+        lastUsedAt: 0,
+        dormant: false,
+        permadormant: true,
+      ),
+      MemoryEvent(
+        id: MemoryStore.newId(),
+        source: EventSource.seed,
+        date: '2024-XX-XX',
+        title: '奶茶店半糖去冰',
+        summary: '他常买半糖去冰',
+        tags: ['奶茶', '半糖', '烤红薯'],
+        weight: '高',
+        createdAt: now,
+        lastUsedAt: 0,
+        dormant: false,
+        permadormant: true,
+      ),
+      MemoryEvent(
+        id: MemoryStore.newId(),
+        source: EventSource.derived,
+        date: '2026-06-20',
+        title: '加班骗人',
+        summary: '说不加班结果加到夜里两点',
+        tags: ['加班', '骗人'],
+        weight: '中',
+        createdAt: now,
+        lastUsedAt: 0,
+        dormant: false,
+        permadormant: false,
+      ),
+    ]);
+
+    // 候选总数 3 ≤ normalK=5，retriever 不会调 LLM rerank
+    final retriever = MemoryRetriever(store: store);
+
+    final r1 = await retriever.retrieve(
+      userMessage: '我刚路过那家奶茶店了',
+      recentMessages: [],
+    );
+    expect(r1.events.any((e) => e.title == '奶茶店半糖去冰'), true,
+        reason: '关键词"奶茶店"召回"奶茶店半糖去冰"');
+
+    final r2 = await retriever.retrieve(
+      userMessage: '今天坐地铁有点冷',
+      recentMessages: [],
+    );
+    expect(r2.events.any((e) => e.title == '雪天地铁围巾'), true,
+        reason: '关键词"地铁"召回"雪天地铁围巾"');
+
+    final r3 = await retriever.retrieve(
+      userMessage: 'asdfasdf',
+      recentMessages: [],
+    );
+    expect(r3.events.isNotEmpty, true,
+        reason: '无关键词时走兜底，仍返回结果');
+
+    // dormant 事件不应进检索池
+    final all = await store.readAllEvents();
+    final derived = all.firstWhere((e) => e.source == EventSource.derived);
+    await store.updateEvents({derived.id: derived.copyWith(dormant: true)});
+    final r4 = await retriever.retrieve(
+      userMessage: '加班',
+      recentMessages: [],
+    );
+    expect(r4.events.any((e) => e.title == '加班骗人'), false,
+        reason: 'dormant=true 的事件不进检索池');
+  });
+
+  test('[4/5] 深度模式分类', () async {
+    final store = MemoryStore('test_depth', baseDirOverride: tmp);
+    final r = MemoryRetriever(store: store);
+
+    expect(await r.classifyDepth('嗯', []), RetrievalDepth.normal,
+        reason: '短消息无关键词 → normal');
+    expect(await r.classifyDepth('你还记得那次地铁的事吗？', []),
+        RetrievalDepth.deep,
+        reason: '含"还记得" → deep');
+    expect(
+        await r.classifyDepth(
+            '今天工作上发生了一件很烦的事，老板又开始那一套不公平的对待了，'
+            '我真的快撑不住了，想跟你好好讲讲这件事的整个来龙去脉，'
+            '这样我心里能舒服一点点也好。',
+            []),
+        RetrievalDepth.deep,
+        reason: '消息 > 60 字 → deep');
+    expect(await r.classifyDepth('上次那个事', []), RetrievalDepth.deep,
+        reason: '含"上次" → deep');
+  });
+
+  test('[5/6] MemoryDecay 沉睡机制', () async {
+    final store = MemoryStore('test_decay', baseDirOverride: tmp);
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final events = <MemoryEvent>[];
+    for (int i = 0; i < 5; i++) {
+      events.add(MemoryEvent(
+        id: MemoryStore.newId(),
+        source: EventSource.seed,
+        date: '2024-01-01',
+        title: 'seed-$i',
+        summary: 'seed event $i',
+        tags: ['seed'],
+        weight: '高',
+        createdAt: now,
+        lastUsedAt: 0,
+        dormant: false,
+        permadormant: true,
+      ));
+    }
+    for (int i = 0; i < 12; i++) {
+      events.add(MemoryEvent(
+        id: MemoryStore.newId(),
+        source: EventSource.derived,
+        date: '2024-01-01',
+        title: 'derived-$i',
+        summary: 'derived $i',
+        tags: ['x'],
+        weight: i < 3 ? '高' : '低',
+        createdAt: now - i * 86400000 * 5,
+        lastUsedAt: 0,
+        dormant: false,
+        permadormant: false,
+      ));
+    }
+    await store.appendEvents(events);
+
+    final decay = MemoryDecay(store: store, softLimit: 8, hardLimit: 20);
+    final dormantCount = await decay.runOnce();
+    expect(dormantCount, 4,
+        reason: '12 - 8 = 4 条 derived 被标 dormant');
+
+    final after = await store.readAllEvents();
+    final seedDormant =
+        after.where((e) => e.source == EventSource.seed && e.dormant).length;
+    expect(seedDormant, 0, reason: 'seed 永不被沉睡');
+
+    final activeDerived = after
+        .where((e) => e.source == EventSource.derived && !e.dormant)
+        .length;
+    expect(activeDerived, 8, reason: 'active derived 缩回 softLimit=8');
+  });
+
+
+  test('[6/7] DIY memory/profile data layer', () async {
+    final service = MemoryService(spiritId: 'diy_test', baseDirOverride: tmp);
+    final store = service.store;
+
+    await service.writeProfile('他很重视被认真记住。');
+    expect(await service.readProfile(), '他很重视被认真记住。');
+
+    final seedA = service.buildSeedEvent(
+      title: '旧种子A',
+      summary: '第一条旧 seed 记忆',
+      tags: ['旧', 'A'],
+      weight: '高',
+    );
+    final seedB = service.buildSeedEvent(
+      title: '旧种子B',
+      summary: '第二条旧 seed 记忆',
+      tags: ['旧', 'B'],
+      weight: '中',
+    );
+    final derived = MemoryEvent(
+      id: MemoryStore.newId(),
+      source: EventSource.derived,
+      date: '2026-06-25',
+      title: '聊天长出的记忆',
+      summary: '这条 derived 不应该被 replaceSeedEvents 删除',
+      tags: ['derived'],
+      weight: '中',
+      createdAt: DateTime.now().millisecondsSinceEpoch,
+      lastUsedAt: 0,
+      dormant: false,
+      permadormant: false,
+    );
+
+    await service.replaceSeedEvents([seedA, seedB]);
+    await store.appendEvent(derived);
+
+    final newSeed = service.buildSeedEvent(
+      title: '',
+      summary: '新的 seed 记忆会替换旧 seed，但保留 derived',
+      tags: ['新'],
+      weight: '高',
+    );
+    await service.replaceSeedEvents([newSeed]);
+
+    final all = await store.readAllEvents();
+    final seeds = all.where((e) => e.source == EventSource.seed).toList();
+    final derivedEvents = all.where((e) => e.source == EventSource.derived).toList();
+
+    expect(seeds.length, 1, reason: 'seed 被整体替换为新列表');
+    expect(seeds.first.summary, '新的 seed 记忆会替换旧 seed，但保留 derived');
+    expect(seeds.first.permadormant, true);
+    expect(seeds.first.dormant, false);
+    expect(seeds.first.weight, '高');
+    expect(derivedEvents.length, 1, reason: 'derived 事件被保留');
+    expect(derivedEvents.first.title, '聊天长出的记忆');
+  });
+
+  test('[7/7] custom spirit prompt is isolated from Xiaoyu demo', () async {
+    final prompt = await buildSystemPrompt(
+      spiritName: '罗罗',
+      demoXiaoyu: false,
+      dynamicMemory: '## 你对用户的整体印象\n用户喜欢安静地表达情绪。\n',
+    );
+
+    expect(prompt.contains('你叫罗罗'), true);
+    expect(prompt.contains('用户喜欢安静地表达情绪'), true);
+    expect(prompt.contains('明远'), false,
+        reason: '自定义精灵 prompt 不能污染小雨/明远 demo 身份');
+    expect(prompt.contains('半年前车祸'), false,
+        reason: '自定义精灵不能继承小雨已逝设定');
+    expect(prompt.contains('半糖去冰'), false,
+        reason: '自定义精灵不能注入小雨 Memory.md / few-shot 专属记忆');
+    expect(prompt.contains('小雨（温柔）'), false,
+        reason: '自定义精灵不能使用小雨专属 few-shot');
+  });
+}
+

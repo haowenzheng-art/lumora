@@ -1,0 +1,33 @@
+name: lumora
+description: Lumora · 思念具象化 Agent
+publish_to: 'none'
+version: 0.1.0
+
+environment:
+  sdk: ^3.5.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  http: ^1.2.0
+  path_provider: ^2.1.0
+  file_picker: ^8.0.0
+  image_picker: ^1.1.0
+  media_kit: ^1.1.10
+  media_kit_video: ^1.2.4
+  media_kit_libs_windows_video: ^1.0.9
+  image: ^4.5.4
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true
+  assets:
+    - agent_data/xiaoyu/Soul.md
+    - agent_data/xiaoyu/Memory.md
+    - agent_data/xiaoyu/Boundaries.md
+    - agent_data/xiaoyu/sprites/
+    - mao.png
+    - bai.png
