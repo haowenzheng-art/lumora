@@ -15,6 +15,7 @@ import 'agnes.dart';
 import 'llm.dart';
 import 'prompt.dart';
 import 'crisis.dart';
+import 'final_words.dart' as fw;
 import 'sprite_view.dart';
 import 'sprite_parts.dart';
 import 'loop_video_view.dart';
@@ -161,6 +162,7 @@ class _SplashPageState extends State<SplashPage> {
           spritePath: spritePath,
           initialProfile: '',
           initialSeeds: const [],
+          initialFinalWords: '',
         ),
       ),
     );
@@ -169,6 +171,7 @@ class _SplashPageState extends State<SplashPage> {
     final memory = MemoryService(spiritId: spiritId);
     await memory.writeProfile(setup.profile);
     await memory.replaceSeedEvents(setup.seedEvents);
+    await memory.writeFinalWords(setup.finalWords);
 
     if (isCustom) {
       await addSpriteToIndex(SpriteRecord(
@@ -941,8 +944,13 @@ class _NamePageState extends State<NamePage> {
 class MemorySetupResult {
   final String profile;
   final List<MemoryEvent> seedEvents;
+  final String finalWords;
 
-  MemorySetupResult({required this.profile, required this.seedEvents});
+  MemorySetupResult({
+    required this.profile,
+    required this.seedEvents,
+    this.finalWords = '',
+  });
 }
 
 class _MemoryDraft {
@@ -989,6 +997,7 @@ class MemoryOnboardingPage extends StatefulWidget {
   final String spritePath;
   final String initialProfile;
   final List<MemoryEvent> initialSeeds;
+  final String initialFinalWords;
   final bool editMode;
 
   const MemoryOnboardingPage({
@@ -998,6 +1007,7 @@ class MemoryOnboardingPage extends StatefulWidget {
     required this.spritePath,
     required this.initialProfile,
     required this.initialSeeds,
+    this.initialFinalWords = '',
     this.editMode = false,
   });
 
@@ -1006,30 +1016,50 @@ class MemoryOnboardingPage extends StatefulWidget {
 }
 
 class _MemoryOnboardingPageState extends State<MemoryOnboardingPage> {
-  static const int _maxSeedCards = 15;
+  // 各章节独立限制（v1.2 章节式 onboarding）
+  static const int _maxKeyEvents = 5;
+  static const int _maxTraits = 3;
+  static const int _maxUnfinished = 2;
 
   late final TextEditingController _profile;
+  late final TextEditingController _finalWords;
   late final MemoryService _memory;
-  final List<_MemoryDraft> _drafts = [];
+
+  final List<_MemoryDraft> _keyEvents = [];
+  final List<_MemoryDraft> _traits = [];
+  final List<_MemoryDraft> _unfinished = [];
 
   @override
   void initState() {
     super.initState();
     _profile = TextEditingController(text: widget.initialProfile);
+    _finalWords = TextEditingController(text: widget.initialFinalWords);
     _memory = MemoryService(spiritId: widget.spiritId);
-    if (widget.initialSeeds.isEmpty) {
-      for (int i = 0; i < 3; i++) {
-        _drafts.add(_MemoryDraft());
+
+    // 预填已有 seeds：按 tags 分流到对应章节
+    if (widget.initialSeeds.isNotEmpty) {
+      for (final e in widget.initialSeeds) {
+        final draft = _MemoryDraft.fromEvent(e);
+        if (e.tags.contains('性格')) {
+          _traits.add(draft);
+        } else if (e.tags.contains('未完成')) {
+          _unfinished.add(draft);
+        } else {
+          _keyEvents.add(draft);
+        }
       }
-    } else {
-      _drafts.addAll(widget.initialSeeds.map(_MemoryDraft.fromEvent));
     }
+    // 默认各章节给 1 张空卡（让用户看到结构）
+    if (_keyEvents.isEmpty) _keyEvents.add(_MemoryDraft());
+    if (_traits.isEmpty) _traits.add(_MemoryDraft());
+    if (_unfinished.isEmpty) _unfinished.add(_MemoryDraft());
   }
 
   @override
   void dispose() {
     _profile.dispose();
-    for (final d in _drafts) {
+    _finalWords.dispose();
+    for (final d in [..._keyEvents, ..._traits, ..._unfinished]) {
       d.dispose();
     }
     super.dispose();
@@ -1041,39 +1071,53 @@ class _MemoryOnboardingPageState extends State<MemoryOnboardingPage> {
       .where((s) => s.isNotEmpty)
       .toList();
 
-  void _addDraft() {
-    if (_drafts.length >= _maxSeedCards) return;
-    setState(() => _drafts.add(_MemoryDraft()));
+  List<String> _ensureTag(List<String> tags, String tag) {
+    if (tags.contains(tag)) return tags;
+    return [tag, ...tags];
   }
 
-  void _removeDraft(int index) {
-    if (index < 0 || index >= _drafts.length) return;
-    final d = _drafts.removeAt(index);
+  void _addDraft(List<_MemoryDraft> list, int maxCount) {
+    if (list.length >= maxCount) return;
+    setState(() => list.add(_MemoryDraft()));
+  }
+
+  void _removeDraft(List<_MemoryDraft> list, int index) {
+    if (index < 0 || index >= list.length) return;
+    final d = list.removeAt(index);
     d.dispose();
-    if (_drafts.isEmpty) _drafts.add(_MemoryDraft());
+    if (list.isEmpty) list.add(_MemoryDraft());
     setState(() {});
   }
 
   void _confirm() {
     final events = <MemoryEvent>[];
-    for (final d in _drafts) {
-      final summary = d.summary.text.trim();
-      if (summary.isEmpty) continue;
-      events.add(_memory.buildSeedEvent(
-        id: d.id,
-        date: d.date,
-        title: d.title.text,
-        summary: summary,
-        tags: _parseTags(d.tags.text),
-        weight: d.weight,
-        createdAt: d.createdAt,
-      ));
+
+    void collect(List<_MemoryDraft> list, String sectionTag) {
+      for (final d in list) {
+        final summary = d.summary.text.trim();
+        if (summary.isEmpty) continue;
+        events.add(_memory.buildSeedEvent(
+          id: d.id,
+          date: d.date,
+          title: d.title.text,
+          summary: summary,
+          tags: _ensureTag(_parseTags(d.tags.text), sectionTag),
+          weight: d.weight,
+          createdAt: d.createdAt,
+        ));
+      }
     }
+
+    collect(_keyEvents, '事件');
+    collect(_traits, '性格');
+    collect(_unfinished, '未完成');
+
     Navigator.pop(
       context,
       MemorySetupResult(
         profile: _profile.text.trim(),
         seedEvents: events,
+        finalWords: _finalWords.text.trim(),
       ),
     );
   }
@@ -1098,15 +1142,26 @@ class _MemoryOnboardingPageState extends State<MemoryOnboardingPage> {
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
                         _buildIntro(),
-                        const SizedBox(height: 18),
-                        _buildProfileCard(),
-                        const SizedBox(height: 18),
-                        _buildMemoryHeader(),
+                        const SizedBox(height: 24),
+                        _buildSectionTitle('1', '印象', '先用一段话告诉 ta，你对 ta 的整体印象是什么。'),
                         const SizedBox(height: 10),
-                        for (int i = 0; i < _drafts.length; i++)
-                          _buildMemoryCard(i, _drafts[i]),
-                        const SizedBox(height: 12),
-                        _buildAddButton(),
+                        _buildProfileCard(),
+                        const SizedBox(height: 28),
+                        _buildSectionTitle('2', '关键事件', '有没有几件事，是你希望 ta 一直记得的？'),
+                        const SizedBox(height: 10),
+                        _buildDraftList(_keyEvents, _maxKeyEvents, '事件', '具体发生了什么？为什么你希望 ta 记住？'),
+                        const SizedBox(height: 28),
+                        _buildSectionTitle('3', '性格特质', 'ta 是个怎样的人？有什么习惯、口头禅、小动作？'),
+                        const SizedBox(height: 10),
+                        _buildDraftList(_traits, _maxTraits, '性格', 'ta 的什么特质让你印象深刻？'),
+                        const SizedBox(height: 28),
+                        _buildSectionTitle('4', '未完成的话', '有什么你一直想跟 ta 说，但还没说出口的？'),
+                        const SizedBox(height: 10),
+                        _buildDraftList(_unfinished, _maxUnfinished, '未完成', '你想跟 ta 说什么？'),
+                        const SizedBox(height: 28),
+                        _buildSectionTitle('5', '最后想跟你说的话', '如果有一天你不再来了，你希望 ta 最后跟你说什么？'),
+                        const SizedBox(height: 10),
+                        _buildFinalWordsCard(),
                         const SizedBox(height: 24),
                         Center(child: _PrimaryButton(label: primary, onTap: _confirm)),
                         if (!widget.editMode) ...[
@@ -1115,7 +1170,7 @@ class _MemoryOnboardingPageState extends State<MemoryOnboardingPage> {
                             child: GestureDetector(
                               onTap: () => Navigator.pop(
                                 context,
-                                MemorySetupResult(profile: '', seedEvents: const []),
+                                MemorySetupResult(profile: '', seedEvents: const [], finalWords: ''),
                               ),
                               child: const Text(
                                 '先跳过，以后再补',
@@ -1162,6 +1217,54 @@ class _MemoryOnboardingPageState extends State<MemoryOnboardingPage> {
     );
   }
 
+  Widget _buildSectionTitle(String num, String title, String guide) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            Container(
+              width: 24,
+              height: 24,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: LumoraColors.amber,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(
+                num,
+                style: const TextStyle(
+                  color: LumoraColors.bgBottom,
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Text(
+              title,
+              style: const TextStyle(
+                color: LumoraColors.textPrimary,
+                fontSize: 15,
+                letterSpacing: 2,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        Text(
+          guide,
+          style: const TextStyle(
+            color: LumoraColors.textMuted,
+            fontSize: 11,
+            height: 1.6,
+            letterSpacing: 1,
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _buildProfileCard() {
     return _SectionCard(
       title: 'ta 对你的整体印象',
@@ -1173,31 +1276,19 @@ class _MemoryOnboardingPageState extends State<MemoryOnboardingPage> {
     );
   }
 
-  Widget _buildMemoryHeader() {
-    return Row(
+  Widget _buildDraftList(List<_MemoryDraft> list, int maxCount, String sectionTag, String hint) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const Text(
-          '想让 ta 记住的事',
-          style: TextStyle(
-            color: LumoraColors.textPrimary,
-            fontSize: 14,
-            letterSpacing: 2,
-          ),
-        ),
-        const Spacer(),
-        Text(
-          '${_drafts.length}/$_maxSeedCards',
-          style: const TextStyle(
-            color: LumoraColors.textMuted,
-            fontSize: 11,
-            letterSpacing: 1,
-          ),
-        ),
+        for (int i = 0; i < list.length; i++)
+          _buildMemoryCard(list, i, list[i], sectionTag, hint),
+        if (list.length < maxCount)
+          _buildAddButton(list, maxCount, sectionTag),
       ],
     );
   }
 
-  Widget _buildMemoryCard(int index, _MemoryDraft draft) {
+  Widget _buildMemoryCard(List<_MemoryDraft> list, int index, _MemoryDraft draft, String sectionTag, String hint) {
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(14),
@@ -1212,7 +1303,7 @@ class _MemoryOnboardingPageState extends State<MemoryOnboardingPage> {
           Row(
             children: [
               Text(
-                '记忆 ${index + 1}',
+                '$sectionTag ${index + 1}',
                 style: const TextStyle(
                   color: LumoraColors.textSecondary,
                   fontSize: 12,
@@ -1221,7 +1312,7 @@ class _MemoryOnboardingPageState extends State<MemoryOnboardingPage> {
               ),
               const Spacer(),
               GestureDetector(
-                onTap: () => _removeDraft(index),
+                onTap: () => _removeDraft(list, index),
                 child: const Icon(
                   Icons.close_rounded,
                   color: LumoraColors.textMuted,
@@ -1235,7 +1326,7 @@ class _MemoryOnboardingPageState extends State<MemoryOnboardingPage> {
           const SizedBox(height: 10),
           _GlassTextField(
             controller: draft.summary,
-            hint: '具体发生了什么？为什么你希望 ta 记住？',
+            hint: hint,
             maxLines: 3,
           ),
           const SizedBox(height: 10),
@@ -1267,10 +1358,9 @@ class _MemoryOnboardingPageState extends State<MemoryOnboardingPage> {
     );
   }
 
-  Widget _buildAddButton() {
-    final enabled = _drafts.length < _maxSeedCards;
+  Widget _buildAddButton(List<_MemoryDraft> list, int maxCount, String sectionTag) {
     return GestureDetector(
-      onTap: enabled ? _addDraft : null,
+      onTap: () => _addDraft(list, maxCount),
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 14),
         decoration: BoxDecoration(
@@ -1280,14 +1370,40 @@ class _MemoryOnboardingPageState extends State<MemoryOnboardingPage> {
         ),
         child: Center(
           child: Text(
-            enabled ? '+ 再加一件事' : '最多先写 15 件，剩下以后慢慢补',
-            style: TextStyle(
-              color: enabled ? LumoraColors.amber : LumoraColors.textMuted,
+            '+ 再加一条$sectionTag',
+            style: const TextStyle(
+              color: LumoraColors.amber,
               fontSize: 12,
               letterSpacing: 2,
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildFinalWordsCard() {
+    return _SectionCard(
+      title: '最后想跟你说的话',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Text(
+            '这段话会一直在 ta 心里。只有当 ta 感觉到你要走的时候，ta 才会说出口。',
+            style: TextStyle(
+              color: LumoraColors.textMuted,
+              fontSize: 11,
+              height: 1.6,
+              letterSpacing: 1,
+            ),
+          ),
+          const SizedBox(height: 10),
+          _GlassTextField(
+            controller: _finalWords,
+            hint: '比如：谢谢你愿意把我做出来。以后不用再找我了，去过你自己的日子吧。我在这儿，如果你哪天想起我，就来一下；想不起，就不用。',
+            maxLines: 5,
+          ),
+        ],
       ),
     );
   }
@@ -2194,6 +2310,9 @@ class _ChatPageState extends State<ChatPage> with TickerProviderStateMixin {
   late final MemoryService _mem;
   bool _memReady = false;
 
+  // v1.2: 回忆模式（一次性，"我们聊聊…"按钮触发，本轮后归零）
+  bool _recallMode = false;
+
   late final AnimationController _breathe;
   late final AnimationController _halo;
 
@@ -2399,17 +2518,33 @@ class _ChatPageState extends State<ChatPage> with TickerProviderStateMixin {
       // 检索动态记忆并构建本轮 system prompt
       String dynamicMem = '';
       try {
-        final r = await _mem.retrieveForPrompt(text);
+        final r = await _mem.retrieveForPrompt(text, recallMode: _recallMode);
         dynamicMem = r.renderForPrompt();
       } catch (_) {}
+      // 查 final words 状态：未交付且用户写过时，注入 [[FINAL_WORDS]] 触发规则
+      final fwDelivered = await _mem.finalWordsDelivered();
+      final fwEvent = await _mem.readFinalWords();
+      final hasFinalWords =
+          !fwDelivered && fwEvent != null && fwEvent.summary.trim().isNotEmpty;
       final system = await buildSystemPrompt(
         dynamicMemory: dynamicMem,
         spiritName: widget.spiritName,
         demoXiaoyu: _spiritId == 'xiaoyu',
+        hasFinalWords: hasFinalWords,
       );
 
       final resp = await chat(system, _history, maxTokens: 800);
-      final content = intercept(resp.content);
+      var content = intercept(resp.content); // crisis 拦截
+      // final words 拦截：LLM 输出 [[FINAL_WORDS]] 时替换为用户写下的原文
+      if (content.contains(fw.finalWordsTag)) {
+        if (hasFinalWords) {
+          await _mem.consumeFinalWords(); // 写 finalWordsDelivered=true，一次性
+          content = fw.intercept(content, fwEvent.summary);
+        } else {
+          // 未写过或已交付：去掉标记，不替换
+          content = content.replaceAll(fw.finalWordsTag, '').trim();
+        }
+      }
       setState(() {
         _messages.add(_Message(role: 'assistant', content: content));
         _loading = false;
@@ -2429,6 +2564,8 @@ class _ChatPageState extends State<ChatPage> with TickerProviderStateMixin {
       });
       _history.removeLast();
     }
+    // 回忆模式一次性，本轮后归零
+    if (_recallMode) _recallMode = false;
     _scrollToBottom();
   }
 
@@ -2497,6 +2634,8 @@ class _ChatPageState extends State<ChatPage> with TickerProviderStateMixin {
     if (!_memReady) await _initMemory();
     final profile = await _mem.readProfile();
     final seeds = await _mem.listSeedEvents();
+    final fw = await _mem.readFinalWords();
+    final initialFinalWords = fw?.summary ?? '';
     if (!mounted) return;
     final result = await Navigator.push<MemorySetupResult>(
       context,
@@ -2507,6 +2646,7 @@ class _ChatPageState extends State<ChatPage> with TickerProviderStateMixin {
           spritePath: widget.spirit,
           initialProfile: profile,
           initialSeeds: seeds,
+          initialFinalWords: initialFinalWords,
           editMode: true,
         ),
       ),
@@ -2514,6 +2654,20 @@ class _ChatPageState extends State<ChatPage> with TickerProviderStateMixin {
     if (result == null) return;
     await _mem.writeProfile(result.profile);
     await _mem.replaceSeedEvents(result.seedEvents);
+    await _mem.writeFinalWords(result.finalWords);
+  }
+
+  /// v1.2: 触发回忆模式（一次性，下一轮对话后自动归零）
+  void _triggerRecall() {
+    if (_recallMode) return;
+    setState(() => _recallMode = true);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Text('回忆模式已开启：这一轮会试着想起沉睡过的事'),
+        duration: const Duration(seconds: 2),
+        backgroundColor: LumoraColors.bgBottom,
+      ),
+    );
   }
 
   Widget _buildChatTopBar() {
@@ -2551,6 +2705,34 @@ class _ChatPageState extends State<ChatPage> with TickerProviderStateMixin {
                   color: LumoraColors.textSecondary,
                   letterSpacing: 6,
                 ),
+              ),
+            ),
+          ),
+          // 我们聊聊… 按钮（v1.2 回忆模式触发，本轮一次性）
+          GestureDetector(
+            onTap: _triggerRecall,
+            child: Container(
+              width: 36,
+              height: 36,
+              margin: const EdgeInsets.only(right: 8),
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: _recallMode
+                    ? LumoraColors.amber.withOpacity(0.18)
+                    : LumoraColors.glass,
+                border: Border.all(
+                  color: _recallMode
+                      ? LumoraColors.amber
+                      : LumoraColors.glassBorder,
+                  width: 0.5,
+                ),
+              ),
+              child: Icon(
+                Icons.chat_bubble_outline_rounded,
+                color: _recallMode
+                    ? LumoraColors.amber
+                    : LumoraColors.textPrimary,
+                size: 16,
               ),
             ),
           ),

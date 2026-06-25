@@ -1,6 +1,8 @@
 import 'dart:io';
 import 'package:flutter/services.dart' show rootBundle;
 
+import 'final_words.dart';
+
 /// 加载 agent_data/xiaoyu/ 下的三份 md
 Future<String> _loadAgentFile(String name) async {
   try {
@@ -93,10 +95,13 @@ $spiritName：你这话让我有点担心。是今天发生了什么具体的事
 ///
 /// [dynamicMemory] 由 [MemoryService.retrieveForPrompt] 渲染好的字符串。
 ///                 若非空，则代替静态 Memory.md 注入；若空（兜底）回退到读 Memory.md。
+/// [hasFinalWords] 为 true 时注入 [[FINAL_WORDS]] 触发规则（仅当用户写过
+///                 最后想跟你说的话且未交付过时才传 true）。
 Future<String> buildSystemPrompt({
   String? dynamicMemory,
   String spiritName = '小雨',
   bool demoXiaoyu = true,
+  bool hasFinalWords = false,
 }) async {
   final soul = demoXiaoyu ? await _loadAgentFile('Soul.md') : _customSoul(spiritName);
   final boundaries = demoXiaoyu ? await _loadAgentFile('Boundaries.md') : _customBoundaries(spiritName);
@@ -176,5 +181,6 @@ $examples
 - 不要解释你在做什么。
 - 不要复述用户的话。
 - 危机场景：如果判断用户处于明确自伤/自杀危机，**只输出** `[[CRISIS_BREAK]]` 这一行（agent 会替换为破出语）。模糊语境走关切性追问，不要输出标记。
+${hasFinalWords ? farewellHintRule : ''}
 ''';
 }

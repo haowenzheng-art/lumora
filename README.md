@@ -192,7 +192,7 @@ CHANGELOG.md             # 更新日志
 
 ## 版本
 
-当前版本：**v1.1.1**
+当前版本：**v1.2.0**
 
 详见 [`CHANGELOG.md`](./CHANGELOG.md)。
 

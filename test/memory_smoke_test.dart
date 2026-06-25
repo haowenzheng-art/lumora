@@ -351,5 +351,105 @@ weight: 中
     expect(prompt.contains('小雨（温柔）'), false,
         reason: '自定义精灵不能使用小雨专属 few-shot');
   });
+
+  test('[8/9] final words seed is isolated from regular retrieval', () async {
+    final service = MemoryService(spiritId: 'fw_test', baseDirOverride: tmp);
+    final store = service.store;
+
+    // 写一条 final words + 一条普通 seed
+    await service.writeFinalWords('谢谢你愿意把我做出来。去过你自己的日子吧。');
+    final regularSeed = service.buildSeedEvent(
+      title: '奶茶店',
+      summary: '他常买半糖去冰',
+      tags: ['奶茶'],
+      weight: '高',
+    );
+    await service.replaceSeedEvents([regularSeed]);
+
+    // readFinalWords 能读到
+    final fw = await service.readFinalWords();
+    expect(fw, isNotNull);
+    expect(fw!.kind, EventKind.finalWords);
+    expect(fw.summary.contains('谢谢你愿意把我做出来'), true);
+    expect(fw.permadormant, true, reason: 'finalWords 永不沉睡');
+    expect(fw.dormant, false);
+    expect(fw.weight, '高');
+
+    // listSeedEvents 不含 finalWords
+    final seeds = await service.listSeedEvents();
+    expect(seeds.any((e) => e.kind == EventKind.finalWords), false,
+        reason: 'listSeedEvents 应排除 finalWords');
+    expect(seeds.length, 1);
+    expect(seeds.first.title, '奶茶店');
+
+    // 普通检索不召回 finalWords
+    final retriever = MemoryRetriever(store: store);
+    final r = await retriever.retrieve(
+      userMessage: '谢谢你',
+      recentMessages: [],
+    );
+    expect(r.events.any((e) => e.kind == EventKind.finalWords), false,
+        reason: 'finalWords 永不进日常检索池');
+    expect(r.events.any((e) => e.title == '奶茶店'), true,
+        reason: '普通 seed 仍能被召回');
+
+    // replaceSeedEvents 不应冲掉 finalWords
+    expect((await service.readFinalWords())?.summary.contains('谢谢你愿意把我做出来'),
+        true,
+        reason: 'replaceSeedEvents 应保留 finalWords seed');
+  });
+
+  test('[9/9] recall mode retrieves dormant events', () async {
+    final store = MemoryStore('recall_test', baseDirOverride: tmp);
+    final now = DateTime.now().millisecondsSinceEpoch;
+
+    // 一条 active seed（基线，不命中"加班"）
+    await store.appendEvent(MemoryEvent(
+      id: MemoryStore.newId(),
+      source: EventSource.seed,
+      date: '2024-01-01',
+      title: '雪天围巾',
+      summary: '冬天大雪那天我把围巾给他',
+      tags: ['雪', '围巾'],
+      weight: '高',
+      createdAt: now,
+      lastUsedAt: 0,
+      dormant: false,
+      permadormant: true,
+    ));
+    // 一条 dormant derived（已沉睡，命中"加班"）
+    await store.appendEvent(MemoryEvent(
+      id: MemoryStore.newId(),
+      source: EventSource.derived,
+      date: '2024-06-01',
+      title: '加班骗人',
+      summary: '说不加班结果加到夜里两点',
+      tags: ['加班', '骗人'],
+      weight: '中',
+      createdAt: now,
+      lastUsedAt: 0,
+      dormant: true,
+      permadormant: false,
+    ));
+
+    final retriever = MemoryRetriever(store: store);
+
+    // 普通模式：dormant 不进池
+    final r1 = await retriever.retrieve(
+      userMessage: '加班',
+      recentMessages: [],
+    );
+    expect(r1.events.any((e) => e.title == '加班骗人'), false,
+        reason: '普通模式下 dormant 事件不进检索池');
+
+    // 回忆模式：dormant 全开
+    final r2 = await retriever.retrieve(
+      userMessage: '加班',
+      recentMessages: [],
+      recallMode: true,
+    );
+    expect(r2.events.any((e) => e.title == '加班骗人'), true,
+        reason: 'recallMode=true 时 dormant 事件应被召回');
+  });
 }
 

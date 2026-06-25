@@ -67,9 +67,13 @@ class MemoryRetriever {
   }
 
   /// 主入口：根据当前 user 消息检索相关记忆
+  ///
+  /// recallMode=true 时全开 dormant 池（用户主动触发回忆模式），但 finalWords
+  /// seed 永远不进普通检索池——它只在 [[FINAL_WORDS]] 触发时由 agent 层显式读取。
   Future<RetrievalResult> retrieve({
     required String userMessage,
     required List<RawMessage> recentMessages,
+    bool recallMode = false,
   }) async {
     final depth = await classifyDepth(userMessage, recentMessages);
     final K = depth == RetrievalDepth.deep ? deepK : normalK;
@@ -77,10 +81,12 @@ class MemoryRetriever {
     final all = await store.readAllEvents();
     final profile = await store.readProfile();
 
-    // 池：seed + active derived
+    // 池：seed + active derived（recallMode 时含 dormant derived）
+    // finalWords seed 永远被屏蔽
     final pool = all.where((e) {
+      if (e.kind == EventKind.finalWords) return false;
       if (e.source == EventSource.seed) return true;
-      return !e.dormant;
+      return !e.dormant || recallMode;
     }).toList();
 
     if (pool.isEmpty) {

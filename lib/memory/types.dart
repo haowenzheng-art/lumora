@@ -8,7 +8,7 @@ import 'dart:convert';
 ///   L3 messages.jsonl —— 原始对话流水
 ///
 /// 事件来源：
-///   - seed：onboarding/迁移注入，permadormant=false 永不沉睡
+///   - seed：onboarding/迁移注入，permadormant=true 永不沉睡
 ///   - derived：聊天提取，active soft 200 / hard 500，超额触发 dormant
 enum EventSource { seed, derived }
 
@@ -24,6 +24,26 @@ EventSource _parseSource(String? s) {
 
 String _sourceToString(EventSource s) =>
     s == EventSource.seed ? 'seed' : 'derived';
+
+/// 事件种类（v1.2 引入）：
+///   - regular：普通 seed/derived，正常进检索池
+///   - finalWords：用户在 onboarding 写的"最后想跟你说的话"，永不沉睡但
+///     日常检索屏蔽，仅在用户表达告别意图触发 [[FINAL_WORDS]] 时由 agent 层
+///     显式读取输出。一次性交付（consumeFinalWords 后标 delivered）
+enum EventKind { regular, finalWords }
+
+EventKind _parseKind(String? s) {
+  switch (s) {
+    case 'finalWords':
+      return EventKind.finalWords;
+    case 'regular':
+    default:
+      return EventKind.regular;
+  }
+}
+
+String _kindToString(EventKind k) =>
+    k == EventKind.finalWords ? 'finalWords' : 'regular';
 
 /// 单条事件
 class MemoryEvent {
@@ -61,6 +81,9 @@ class MemoryEvent {
   /// 是否永不沉睡（seed=true，derived=false）
   final bool permadormant;
 
+  /// 事件种类（v1.2）：regular 或 finalWords
+  final EventKind kind;
+
   MemoryEvent({
     required this.id,
     required this.source,
@@ -73,6 +96,7 @@ class MemoryEvent {
     required this.lastUsedAt,
     required this.dormant,
     required this.permadormant,
+    this.kind = EventKind.regular,
   });
 
   factory MemoryEvent.fromJson(Map<String, dynamic> j) => MemoryEvent(
@@ -89,6 +113,7 @@ class MemoryEvent {
         lastUsedAt: (j['lastUsedAt'] as num?)?.toInt() ?? 0,
         dormant: (j['dormant'] as bool?) ?? false,
         permadormant: (j['permadormant'] as bool?) ?? false,
+        kind: _parseKind(j['kind'] as String?),
       );
 
   Map<String, dynamic> toJson() => {
@@ -103,6 +128,7 @@ class MemoryEvent {
         'lastUsedAt': lastUsedAt,
         'dormant': dormant,
         'permadormant': permadormant,
+        'kind': _kindToString(kind),
       };
 
   String toJsonLine() => jsonEncode(toJson());
@@ -119,6 +145,7 @@ class MemoryEvent {
     int? lastUsedAt,
     bool? dormant,
     bool? permadormant,
+    EventKind? kind,
   }) =>
       MemoryEvent(
         id: id ?? this.id,
@@ -132,6 +159,7 @@ class MemoryEvent {
         lastUsedAt: lastUsedAt ?? this.lastUsedAt,
         dormant: dormant ?? this.dormant,
         permadormant: permadormant ?? this.permadormant,
+        kind: kind ?? this.kind,
       );
 
   /// 该事件渲染进 prompt 的文本形式

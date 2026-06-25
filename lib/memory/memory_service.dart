@@ -67,11 +67,17 @@ class MemoryService {
   }
 
   /// 检索当前 user 消息相关的记忆（含 profile）
-  Future<RetrievalResult> retrieveForPrompt(String userMessage) async {
+  ///
+  /// recallMode=true 时召回 dormant 池（用户主动触发回忆模式）。
+  Future<RetrievalResult> retrieveForPrompt(
+    String userMessage, {
+    bool recallMode = false,
+  }) async {
     final recent = await store.readRecentMessages(12);
     return retriever.retrieve(
       userMessage: userMessage,
       recentMessages: recent,
+      recallMode: recallMode,
     );
   }
 
@@ -99,22 +105,29 @@ class MemoryService {
   /// 写入 L1 profile
   Future<void> writeProfile(String profile) => store.writeProfile(profile.trim());
 
-  /// 读取所有 seed events（用户显式设定的初始记忆）
+  /// 读取所有 seed events（用户显式设定的初始记忆，不含 finalWords）
   Future<List<MemoryEvent>> listSeedEvents() async {
     final all = await store.readAllEvents();
-    return all.where((e) => e.source == EventSource.seed).toList();
+    return all
+        .where((e) =>
+            e.source == EventSource.seed && e.kind != EventKind.finalWords)
+        .toList();
   }
 
-  /// 替换 seed events，保留 derived events 不动。
+  /// 替换 seed events，保留 derived events 与 finalWords seed 不动。
   Future<void> replaceSeedEvents(List<MemoryEvent> events) async {
     final all = await store.readAllEvents();
-    final derived = all.where((e) => e.source != EventSource.seed).toList();
+    // 保留：derived 事件 + finalWords seed（不被普通编辑冲掉）
+    final keep = all
+        .where((e) => e.source != EventSource.seed || e.kind == EventKind.finalWords)
+        .toList();
     final now = DateTime.now().millisecondsSinceEpoch;
     final hardened = events
         .where((e) => e.summary.trim().isNotEmpty)
         .map((e) => e.copyWith(
               id: e.id.isEmpty ? MemoryStore.newId() : e.id,
               source: EventSource.seed,
+              kind: EventKind.regular,
               title: e.title.trim().isEmpty
                   ? _fallbackTitle(e.summary)
                   : e.title.trim(),
@@ -126,7 +139,7 @@ class MemoryService {
               permadormant: true,
             ))
         .toList();
-    await store.rewriteAllEvents([...derived, ...hardened]);
+    await store.rewriteAllEvents([...keep, ...hardened]);
   }
 
   /// 构造一条 seed event，供 onboarding/editor UI 使用。
@@ -138,6 +151,7 @@ class MemoryService {
     List<String> tags = const [],
     String weight = '中',
     int createdAt = 0,
+    EventKind kind = EventKind.regular,
   }) {
     final now = DateTime.now();
     final dateText = date.trim().isEmpty
@@ -146,6 +160,7 @@ class MemoryService {
     return MemoryEvent(
       id: id.isEmpty ? MemoryStore.newId() : id,
       source: EventSource.seed,
+      kind: kind,
       date: dateText,
       title: title.trim().isEmpty ? _fallbackTitle(summary) : title.trim(),
       summary: summary.trim(),
@@ -156,6 +171,74 @@ class MemoryService {
       dormant: false,
       permadormant: true,
     );
+  }
+
+  // ============ Final Words API（v1.2） ============
+
+  /// 读取 finalWords seed（若有）。返回 null 表示用户没写过。
+  Future<MemoryEvent?> readFinalWords() async {
+    final all = await store.readAllEvents();
+    for (final e in all) {
+      if (e.kind == EventKind.finalWords) return e;
+    }
+    return null;
+  }
+
+  /// 写入或覆盖 finalWords seed。text 为空则删除已有 finalWords。
+  Future<void> writeFinalWords(String text) async {
+    final trimmed = text.trim();
+    final all = await store.readAllEvents();
+    final withoutFinal = all.where((e) => e.kind != EventKind.finalWords).toList();
+    if (trimmed.isEmpty) {
+      await store.rewriteAllEvents(withoutFinal);
+      return;
+    }
+    final existing = all.firstWhere(
+      (e) => e.kind == EventKind.finalWords,
+      orElse: () => MemoryEvent(
+        id: MemoryStore.newId(),
+        source: EventSource.seed,
+        kind: EventKind.finalWords,
+        date: '',
+        title: '最后想跟你说的话',
+        summary: '',
+        tags: const ['最后的话'],
+        weight: '高',
+        createdAt: 0,
+        lastUsedAt: 0,
+        dormant: false,
+        permadormant: true,
+      ),
+    );
+    final now = DateTime.now();
+    final dateText = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+    final updated = existing.copyWith(
+      summary: trimmed,
+      createdAt: existing.createdAt == 0
+          ? DateTime.now().millisecondsSinceEpoch
+          : existing.createdAt,
+      date: existing.date.isEmpty ? dateText : existing.date,
+      dormant: false,
+      permadormant: true,
+    );
+    await store.rewriteAllEvents([...withoutFinal, updated]);
+  }
+
+  /// 是否已交付过 final words（一次性标志）。
+  Future<bool> finalWordsDelivered() async {
+    final meta = await store.readMeta();
+    return (meta['finalWordsDelivered'] as bool?) ?? false;
+  }
+
+  /// 消费 final words：返回内容并写 finalWordsDelivered=true 防止重复输出。
+  /// 若未写过或已交付过，返回空字符串。
+  Future<String> consumeFinalWords() async {
+    final delivered = await finalWordsDelivered();
+    if (delivered) return '';
+    final fw = await readFinalWords();
+    if (fw == null) return '';
+    await store.patchMeta({'finalWordsDelivered': true});
+    return fw.summary;
   }
 
   String _fallbackTitle(String summary) {

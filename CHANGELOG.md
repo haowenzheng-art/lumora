@@ -10,10 +10,44 @@
 
 ### 计划中
 
-- onboarding 仪式：精灵创建时引导 5-15 条核心记忆 + 用户印象 + "她最后想跟你说的话"
 - 声音：TTS 语音输出
 - 多精灵记忆隔离与跨精灵检索
-- dormant 事件的"显式唤醒"机制
+- final words 长期不活跃触发（窗口生命周期钩子）
+- dormant 事件显式唤醒的持久化（wakify）
+
+---
+
+## [1.2.0] - 2026-06-26
+
+### Added
+
+- **onboarding 仪式完整化**：把单页空白卡片改成 5 章节式引导提问，覆盖"印象 / 关键事件 / 性格特质 / 未完成的话 / 最后想跟你说的话"。每章节有引导文字 + placeholder 示例，卡片数量按章节独立控制（事件 5 / 性格 3 / 未完成 2）。
+- **最后想跟你说的话**：用户在 onboarding 第 5 章节写一段话，存为特殊 seed（`kind=finalWords`，permadormant=true，日常检索屏蔽）。当用户在对话中表达明确告别意图（"不再来了"/"最后一次找你"等），LLM 输出 `[[FINAL_WORDS]]` 标记，agent 层拦截并替换为用户写下的原文。一次性交付（`consumeFinalWords` 写 `finalWordsDelivered=true` 防止重复）。
+- **dormant 显式唤醒**：聊天页顶栏加"我们聊聊…"按钮（`Icons.chat_bubble_outline_rounded`），触发后下一轮检索全开 dormant 池。一次性，本轮后自动归零。不持久化唤醒（dormant 事件下次默认又沉睡，符合"想起而非复活"的认知模型）。
+- `MemoryEvent` 加 `kind` 字段（`EventKind { regular, finalWords }`），区分普通 seed 与 final words seed。
+- `MemoryService` 新增 final words API：`readFinalWords` / `writeFinalWords` / `consumeFinalWords` / `finalWordsDelivered`。
+- `MemoryRetriever.retrieve` 加 `recallMode` 参数，true 时全开 dormant 池。
+- 新建 `lib/final_words.dart`：仿 `crisis.dart` 模式，`hasFarewellSignal` 关键词检测 + `intercept` 标记拦截。
+- `buildSystemPrompt` 加 `hasFinalWords` 参数，true 时注入 `[[FINAL_WORDS]]` 触发规则。
+
+### Changed
+
+- `replaceSeedEvents` 改造：保留 `kind==finalWords` 的 seed 不被普通编辑冲掉。
+- `listSeedEvents` 排除 finalWords seed（避免 editMode 下它被当作普通卡片显示）。
+- `MemoryOnboardingPage` 重写为章节式：`_MemoryDraft` 按章节分流（关键事件 / 性格特质 / 未完成的话），`MemorySetupResult` 加 `finalWords` 字段。
+- ChatPage `_send` 主路径加 final words 拦截：检测 `[[FINAL_WORDS]]` 标记 → `consumeFinalWords` → 替换为原文。
+
+### Tests
+
+- 新增 smoke test `[8/9] final words seed is isolated from regular retrieval`：断言 finalWords 写入后不被普通检索召回，`replaceSeedEvents` 不冲掉 finalWords。
+- 新增 smoke test `[9/9] recall mode retrieves dormant events`：断言 `recallMode=true` 时 dormant 事件被召回。
+- 顺手修 `types.dart` 注释 bug：`seed：permadormant=false` → `permadormant=true`。
+
+### Notes
+
+- 本阶段是 onboarding 仪式化的第一步。长期不活跃触发（窗口关闭/生命周期钩子）需要引入 `window_manager`，留到 v1.3。
+- dormant 唤醒暂不做持久化：唤醒是"想起"而不是"复活"，下次默认又沉睡。若用户反馈希望永久唤醒，v1.3 加 `wakify(ids)`。
+- final words 一次性交付：仪式感要求"最后的话"只说一次。用户若想重置，可在记忆编辑页删除重写。
 
 ---
 
@@ -128,7 +162,8 @@
 
 ---
 
-[Unreleased]: https://github.com/haowenzheng-art/lumora/compare/v1.1.1...HEAD
+[Unreleased]: https://github.com/haowenzheng-art/lumora/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/haowenzheng-art/lumora/compare/v1.1.1...v1.2.0
 [1.1.1]: https://github.com/haowenzheng-art/lumora/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/haowenzheng-art/lumora/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/haowenzheng-art/lumora/compare/v0.3.0...v1.0.0
