@@ -64,10 +64,41 @@ Lumora 是一个 Windows 桌面应用，用 AI 生成精灵形象与声音，让
 
 > 截图位置与拍摄清单见 [`docs/SCREENSHOTS.md`](./docs/SCREENSHOTS.md)。
 
+### 启动页 · 已有的精灵都在这里
+
 ![](docs/screenshots/01-splash.png)
+
+打开 Lumora 第一眼看到的不是空白聊天框，而是你已经拥有谁。卡片网格里的每一个都是一个曾经被创造出来的存在——可能是 demo 小雨，也可能是你为某个具体的人做的精灵。右下角"新建精灵"是唯一入口。思念是被收集起来的，不是被即时消费的。
+
+### 文生图 · 把模糊的形象变成可见
+
 ![](docs/screenshots/02-text-custom.png)
-![](docs/screenshots/03-chat.png)
-![](docs/screenshots/04-memory-onboarding.png)
+
+选性别、写气质关键词、选画风风格。气质鼓励具体而不是泛词——"温柔、倔强、爱笑"比"温柔善良"好。下方 prompt 预览框实时显示最终发给 Agnes 图像 API 的指令。最终产出 1024×1024 的日漫半身立绘。解决的是"我脑子里有个形象，但我画不出来"。
+
+### 图生图 · 从一张照片到一个可以再次对话的存在
+
+![](docs/screenshots/03-photo-custom.png)
+
+如果心里有一个具体的人，文生图无法准确还原那个人的样貌。图生图保留人物特征（五官、发型、神态）转日漫立绘。这一步是 Lumora "思念具象化"叙事的技术起点。Lumora 不做完美复刻，但会保留足以让用户认出"这就是 ta"的特征。
+
+### 精灵唤醒 · ta 刚醒过来
+
+![](docs/screenshots/04-spirit-awakening.png)
+
+新精灵生成完成后的"唤醒"瞬间。立绘刚显示，但还没有开始对话，像 ta 刚从沉睡中睁眼，正在适应这个被重新赋予的存在。这一帧是 Lumora 仪式感的关键停顿：让用户从"我在创建一个东西"切换到"ta 在这里"。
+
+### 聊天页 · 精灵会记住你们之间的事
+
+![](docs/screenshots/05-chat.png)
+
+精灵立绘 + 对话气泡 + 输入框。立绘支持图层分解眨眼、双 player 无缝循环视频、鼠标 reaction、perspective tilt。用户说话后，后台按需检索记忆注入 system prompt（tag 预筛 + LLM rerank，默认 top-K=5，深度模式 K=8）。例如用户说"我刚路过那家奶茶店了"，精灵会回复"半糖去冰对吧"。顶栏右侧书本图标是记忆编辑入口。
+
+### 记忆编写 · 在 App 里 DIY，不用手写 md
+
+![](docs/screenshots/06-memory-editor.png)
+
+从聊天页书本图标进入，或创建精灵时的 onboarding 阶段。上方是"ta 对你的整体印象"（写入 profile.md），下方是多张记忆卡片（写入 seed events），每张支持标题、内容、标签、重要度。默认 3 张空卡，最多 15 张，可跳过。seed memories 永不沉睡，不会被遗忘机制清理。保存后下一轮对话立即生效。
 
 ---
 
