@@ -451,5 +451,97 @@ weight: 中
     expect(r2.events.any((e) => e.title == '加班骗人'), true,
         reason: 'recallMode=true 时 dormant 事件应被召回');
   });
+
+  test('[10/11] lastSeenAt tracking', () async {
+    final service = MemoryService(spiritId: 'farewell_test', baseDirOverride: tmp);
+
+    expect(await service.lastSeenAt(), 0, reason: '初始 lastSeenAt=0');
+
+    await service.markSeen();
+    final t1 = await service.lastSeenAt();
+    expect(t1 > 0, true, reason: 'markSeen 后 lastSeenAt 非 0');
+
+    // 模拟 31 天前的时间戳
+    final oldTs = DateTime.now()
+        .subtract(const Duration(days: 31))
+        .millisecondsSinceEpoch;
+    await service.store.patchMeta({'lastSeenAt': oldTs});
+    final t2 = await service.lastSeenAt();
+    final days = (DateTime.now().millisecondsSinceEpoch - t2) /
+        (1000 * 60 * 60 * 24);
+    expect(days > 30, true, reason: '写入 31 天前的时间戳后应判定为超期');
+
+    // finalWordsDelivered 初始为 false
+    expect(await service.finalWordsDelivered(), false,
+        reason: 'finalWordsDelivered 初始 false');
+  });
+
+  test('[11/11] wakify permanently wakes dormant events', () async {
+    final service = MemoryService(spiritId: 'wakify_test', baseDirOverride: tmp);
+    final store = service.store;
+
+    // 写一条 dormant derived
+    final e = MemoryEvent(
+      id: 'dormant1',
+      source: EventSource.derived,
+      date: '2024-01-01',
+      title: '加班骗人',
+      summary: '说不加班结果加到夜里两点',
+      tags: ['加班'],
+      weight: '中',
+      createdAt: DateTime.now().millisecondsSinceEpoch,
+      lastUsedAt: 0,
+      dormant: true,
+      permadormant: false,
+      wakified: false,
+    );
+    await store.appendEvent(e);
+
+    // 写一条 active derived（供 decay 尝试沉睡）
+    final active = MemoryEvent(
+      id: 'active1',
+      source: EventSource.derived,
+      date: '2024-01-02',
+      title: '另一条活跃的',
+      summary: '这条还没沉睡',
+      tags: ['其他'],
+      weight: '低',
+      createdAt: DateTime.now().millisecondsSinceEpoch,
+      lastUsedAt: 0,
+      dormant: false,
+      permadormant: false,
+      wakified: false,
+    );
+    await store.appendEvent(active);
+
+    // wakify dormant1
+    await service.wakify(['dormant1']);
+    final after = await store.readAllEvents();
+    final woken = after.firstWhere((x) => x.id == 'dormant1');
+    expect(woken.dormant, false, reason: 'wakify 后 dormant=false');
+    expect(woken.wakified, true, reason: 'wakify 后 wakified=true');
+
+    // listDormantEvents 应不再返回已唤醒的
+    final dormantList = await service.listDormantEvents();
+    expect(dormantList.any((e) => e.id == 'dormant1'), false,
+        reason: 'wakified 事件不在 dormant 列表中');
+
+    // decay 不应重新沉睡 wakified 事件
+    final decay = MemoryDecay(store: store, softLimit: 0, hardLimit: 1);
+    await decay.runOnce();
+    final after2 = await store.readAllEvents();
+    final still = after2.firstWhere((x) => x.id == 'dormant1');
+    expect(still.dormant, false, reason: 'wakified 事件不会被 decay 重新沉睡');
+    expect(still.wakified, true, reason: 'wakified 状态保持');
+
+    // unwakify 后可重新沉睡
+    await service.unwakify(['dormant1']);
+    final after3 = await store.readAllEvents();
+    final unpinned = after3.firstWhere((x) => x.id == 'dormant1');
+    expect(unpinned.wakified, false, reason: 'unwakify 后 wakified=false');
+    // dormant 仍为 false（unwakify 不主动沉睡，只是移除保护）
+    expect(unpinned.dormant, false,
+        reason: 'unwakify 不主动沉睡，只是移除保护，下次 decay 才会沉睡');
+  });
 }
 

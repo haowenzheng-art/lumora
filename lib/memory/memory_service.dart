@@ -241,6 +241,59 @@ class MemoryService {
     return fw.summary;
   }
 
+  // ============ v1.3: 长期不活跃检测 + wakify ============
+
+  /// 上次见到用户的时间（unix ms）。0 表示从未记录（首次进入）。
+  Future<int> lastSeenAt() async {
+    final meta = await store.readMeta();
+    return (meta['lastSeenAt'] as num?)?.toInt() ?? 0;
+  }
+
+  /// 标记"现在见到了用户"。在 SpiritScenePage initState 调用。
+  Future<void> markSeen() async {
+    await store.patchMeta(
+        {'lastSeenAt': DateTime.now().millisecondsSinceEpoch});
+  }
+
+  /// 列出所有 dormant derived 事件（不含 seed / finalWords）。
+  Future<List<MemoryEvent>> listDormantEvents() async {
+    final all = await store.readAllEvents();
+    return all
+        .where((e) =>
+            e.source == EventSource.derived &&
+            e.dormant &&
+            e.kind != EventKind.finalWords)
+        .toList();
+  }
+
+  /// 永久唤醒指定 dormant 事件（钉住，永不再沉睡）。
+  Future<void> wakify(List<String> ids) async {
+    if (ids.isEmpty) return;
+    final all = await store.readAllEvents();
+    final idSet = ids.toSet();
+    final patches = <String, MemoryEvent>{};
+    for (final e in all) {
+      if (idSet.contains(e.id) && e.dormant) {
+        patches[e.id] = e.copyWith(dormant: false, wakified: true);
+      }
+    }
+    await store.updateEvents(patches);
+  }
+
+  /// 取消钉住（让事件重新可被 decay 沉睡）。
+  Future<void> unwakify(List<String> ids) async {
+    if (ids.isEmpty) return;
+    final all = await store.readAllEvents();
+    final idSet = ids.toSet();
+    final patches = <String, MemoryEvent>{};
+    for (final e in all) {
+      if (idSet.contains(e.id) && e.wakified) {
+        patches[e.id] = e.copyWith(wakified: false);
+      }
+    }
+    await store.updateEvents(patches);
+  }
+
   String _fallbackTitle(String summary) {
     final s = summary.trim();
     if (s.isEmpty) return '一件想记住的事';

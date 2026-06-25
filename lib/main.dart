@@ -1029,6 +1029,9 @@ class _MemoryOnboardingPageState extends State<MemoryOnboardingPage> {
   final List<_MemoryDraft> _traits = [];
   final List<_MemoryDraft> _unfinished = [];
 
+  // v1.3: 沉睡的记忆列表（仅 editMode 下加载）
+  List<MemoryEvent> _dormant = [];
+
   @override
   void initState() {
     super.initState();
@@ -1053,6 +1056,16 @@ class _MemoryOnboardingPageState extends State<MemoryOnboardingPage> {
     if (_keyEvents.isEmpty) _keyEvents.add(_MemoryDraft());
     if (_traits.isEmpty) _traits.add(_MemoryDraft());
     if (_unfinished.isEmpty) _unfinished.add(_MemoryDraft());
+
+    // v1.3: editMode 下加载 dormant 列表
+    if (widget.editMode) {
+      _refreshDormant();
+    }
+  }
+
+  Future<void> _refreshDormant() async {
+    final list = await _memory.listDormantEvents();
+    if (mounted) setState(() => _dormant = list);
   }
 
   @override
@@ -1162,6 +1175,13 @@ class _MemoryOnboardingPageState extends State<MemoryOnboardingPage> {
                         _buildSectionTitle('5', '最后想跟你说的话', '如果有一天你不再来了，你希望 ta 最后跟你说什么？'),
                         const SizedBox(height: 10),
                         _buildFinalWordsCard(),
+                        if (widget.editMode) ...[
+                          const SizedBox(height: 28),
+                          _buildSectionTitle('6', '沉睡的记忆',
+                              '这些是 ta 聊天中长出但已经沉睡的事。钉住后 ta 会一直记得。'),
+                          const SizedBox(height: 10),
+                          _buildDormantList(),
+                        ],
                         const SizedBox(height: 24),
                         Center(child: _PrimaryButton(label: primary, onTap: _confirm)),
                         if (!widget.editMode) ...[
@@ -1402,6 +1422,141 @@ class _MemoryOnboardingPageState extends State<MemoryOnboardingPage> {
             controller: _finalWords,
             hint: '比如：谢谢你愿意把我做出来。以后不用再找我了，去过你自己的日子吧。我在这儿，如果你哪天想起我，就来一下；想不起，就不用。',
             maxLines: 5,
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// v1.3: 沉睡的记忆列表（editMode 下显示，可 pin/unpin）
+  Widget _buildDormantList() {
+    if (_dormant.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: LumoraColors.glass,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: LumoraColors.glassBorder, width: 0.8),
+        ),
+        child: const Text(
+          '还没有沉睡的记忆。聊天中长出新记忆后，时间久了不用的会自动沉睡到这里。',
+          style: TextStyle(
+            color: LumoraColors.textMuted,
+            fontSize: 11,
+            height: 1.6,
+            letterSpacing: 1,
+          ),
+        ),
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (final e in _dormant) _buildDormantCard(e),
+      ],
+    );
+  }
+
+  Widget _buildDormantCard(MemoryEvent e) {
+    final isPinned = e.wakified;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: LumoraColors.glass,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: isPinned
+              ? LumoraColors.amber.withValues(alpha: 0.6)
+              : LumoraColors.glassBorder,
+          width: 0.8,
+        ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  e.title.isEmpty ? '无标题' : e.title,
+                  style: const TextStyle(
+                    color: LumoraColors.textPrimary,
+                    fontSize: 12,
+                    letterSpacing: 1,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  e.summary,
+                  style: const TextStyle(
+                    color: LumoraColors.textSecondary,
+                    fontSize: 11,
+                    height: 1.5,
+                  ),
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  e.date,
+                  style: const TextStyle(
+                    color: LumoraColors.textMuted,
+                    fontSize: 10,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          GestureDetector(
+            onTap: () async {
+              if (isPinned) {
+                await _memory.unwakify([e.id]);
+              } else {
+                await _memory.wakify([e.id]);
+              }
+              await _refreshDormant();
+            },
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: isPinned
+                    ? LumoraColors.amber.withValues(alpha: 0.18)
+                    : LumoraColors.glass,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: isPinned
+                      ? LumoraColors.amber
+                      : LumoraColors.glassBorder,
+                  width: 0.5,
+                ),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    isPinned ? Icons.push_pin : Icons.push_pin_outlined,
+                    color: isPinned
+                        ? LumoraColors.amber
+                        : LumoraColors.textMuted,
+                    size: 14,
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    isPinned ? '已钉' : '钉住',
+                    style: TextStyle(
+                      color: isPinned
+                          ? LumoraColors.amber
+                          : LumoraColors.textMuted,
+                      fontSize: 11,
+                      letterSpacing: 1,
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ),
         ],
       ),
@@ -1980,6 +2135,10 @@ class _SpiritScenePageState extends State<SpiritScenePage>
   // 图层合成（视频未就绪时的 fallback）
   PartsManifest? _parts;
 
+  // v1.3: 告别模式（长期不活跃触发 final words）
+  bool _farewellMode = false;
+  String _farewellText = '';
+
   String get _spiritId {
     final p = widget.spritePath;
     final slash = p.lastIndexOf(RegExp(r'[/\\]'));
@@ -2002,6 +2161,30 @@ class _SpiritScenePageState extends State<SpiritScenePage>
 
     _bootVideos();
     _loadParts();
+    _checkFarewell();
+  }
+
+  /// v1.3: 检测长期不活跃，超期且 finalWords 未交付则进入告别模式
+  Future<void> _checkFarewell() async {
+    final mem = MemoryService(spiritId: _spiritId);
+    final last = await mem.lastSeenAt();
+    final now = DateTime.now().millisecondsSinceEpoch;
+    // 无论是否触发告别，本次启动都算"见到用户"
+    await mem.markSeen();
+    if (last == 0) return; // 首次进入，不触发
+    final days = (now - last) / (1000 * 60 * 60 * 24);
+    if (days < 30) return; // 未超期
+    final fw = await mem.readFinalWords();
+    if (fw == null || fw.summary.trim().isEmpty) return;
+    final delivered = await mem.finalWordsDelivered();
+    if (delivered) return;
+    await mem.consumeFinalWords(); // 标 delivered=true，一次性
+    if (mounted) {
+      setState(() {
+        _farewellMode = true;
+        _farewellText = fw.summary;
+      });
+    }
   }
 
   Future<void> _loadParts() async {
@@ -2159,6 +2342,7 @@ class _SpiritScenePageState extends State<SpiritScenePage>
 
   @override
   Widget build(BuildContext context) {
+    if (_farewellMode) return _buildFarewellView();
     final scene = _sceneFor(_spiritId, DateTime.now());
     return Scaffold(
       body: Stack(
@@ -2267,6 +2451,94 @@ class _SpiritScenePageState extends State<SpiritScenePage>
                                 fontSize: 12,
                                 color: LumoraColors.textPrimary,
                                 letterSpacing: 6,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// v1.3: 告别视图——长期不活跃后启动，精灵说出 final words
+  Widget _buildFarewellView() {
+    return Scaffold(
+      body: Stack(
+        children: [
+          const _BackgroundGradient(),
+          ..._buildParticles(50),
+          SafeArea(
+            child: Column(
+              children: [
+                _TopBar(
+                  title: widget.spiritName,
+                  onBack: () => Navigator.pop(context),
+                ),
+                Expanded(
+                  child: Center(
+                    child: SingleChildScrollView(
+                      padding: const EdgeInsets.symmetric(horizontal: 48, vertical: 24),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          Opacity(
+                            opacity: 0.55,
+                            child: SpiritView(
+                              spritePath: widget.spritePath,
+                              manifest: _parts,
+                              width: 220,
+                              height: 280,
+                              borderRadius: BorderRadius.circular(22),
+                              pointer: null,
+                              pulseToken: 0,
+                              onTap: null,
+                            ),
+                          ),
+                          const SizedBox(height: 36),
+                          Text(
+                            _farewellText,
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              fontSize: 15,
+                              color: LumoraColors.textPrimary,
+                              height: 2.0,
+                              letterSpacing: 2,
+                            ),
+                          ),
+                          const SizedBox(height: 40),
+                          GestureDetector(
+                            onTap: () {
+                              if (mounted) {
+                                setState(() => _farewellMode = false);
+                              }
+                            },
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 32, vertical: 14),
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(24),
+                                color: LumoraColors.glass,
+                                border: Border.all(
+                                  color:
+                                      LumoraColors.amber.withValues(alpha: 0.5),
+                                  width: 0.8,
+                                ),
+                              ),
+                              child: const Text(
+                                '我知道了',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: LumoraColors.textPrimary,
+                                  letterSpacing: 6,
+                                ),
                               ),
                             ),
                           ),

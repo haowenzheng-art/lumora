@@ -12,8 +12,39 @@
 
 - 声音：TTS 语音输出
 - 多精灵记忆隔离与跨精灵检索
-- final words 长期不活跃触发（窗口生命周期钩子）
-- dormant 事件显式唤醒的持久化（wakify）
+- UX 抛光（视觉/动画/空状态）
+
+---
+
+## [1.3.0] - 2026-06-26
+
+### Added
+
+- **final words 长期不活跃触发**：用户 >30 天未打开精灵后，下次进入 SpiritScenePage 时自动进入"告别模式"——精灵立绘半透明 + 显示用户在 onboarding 写下的"最后想跟你说的话"原文 + "我知道了"按钮。点按钮后回到正常 SpiritScenePage，`finalWordsDelivered` 标 true 不再重复触发。
+  - `MemoryService` 新增 `lastSeenAt()` / `markSeen()` 门面，写 `meta.lastSeenAt` 字段
+  - `SpiritScenePage.initState` 加 `_checkFarewell()`：读 lastSeenAt → markSeen → 若超期且 finalWords 未交付则 `consumeFinalWords` 并进入告别视图
+  - **无需引入 `window_manager`**：冷启动场景下进程已死，只能在启动时主动读；30 天阈值下"上次启动时间"和"上次关闭时间"差几小时无所谓
+- **dormant wakify（永久唤醒）**：`MemoryEvent` 加 `wakified` 字段，用户可"钉住"dormant 事件让它永不再沉睡。
+  - `MemoryService` 新增 `listDormantEvents()` / `wakify(ids)` / `unwakify(ids)`
+  - `MemoryDecay.runOnce` 过滤条件加 `!e.wakified`，wakified 事件永不被沉睡
+  - `MemoryOnboardingPage` editMode 下加第 6 节"沉睡的记忆"，列出所有 dormant derived 事件，每条带 pin/unpin 按钮
+  - 与 v1.2 recallMode 区分：recallMode 是一次性召回（想起而非复活），wakify 是永久钉住（真正记住）
+
+### Changed
+
+- `MemoryEvent` 加 `wakified: bool` 字段（默认 false），`fromJson` / `toJson` / `copyWith` 同步
+- `MemoryDecay` 沉睡过滤从 `!e.permadormant` 改为 `!e.permadormant && !e.wakified`
+
+### Tests
+
+- 新增 smoke test `[10/11] lastSeenAt tracking`：断言 markSeen 写入 + 31 天前时间戳判定超期 + finalWordsDelivered 初始 false
+- 新增 smoke test `[11/11] wakify permanently wakes dormant events`：断言 wakify 后 dormant=false + wakified=true + decay 不重新沉睡 + unwakify 后可重新沉睡
+
+### Notes
+
+- v1.3 是 v1.x 阶段收尾。onboarding 仪式的"最后想跟你说的话"现在覆盖两条触发路径：对话中语言信号（v1.2）+ 长期不活跃（v1.3）。
+- wakify 与 recallMode 语义分层：recallMode 是"这一轮想起来"，wakify 是"永远记住"。用户可在记忆编辑页主动管理 dormant 事件。
+- 30 天阈值硬编码，未来若想可调加 `MemoryService.farewellThresholdDays` 参数。
 
 ---
 
@@ -162,7 +193,8 @@
 
 ---
 
-[Unreleased]: https://github.com/haowenzheng-art/lumora/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/haowenzheng-art/lumora/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/haowenzheng-art/lumora/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/haowenzheng-art/lumora/compare/v1.1.1...v1.2.0
 [1.1.1]: https://github.com/haowenzheng-art/lumora/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/haowenzheng-art/lumora/compare/v1.0.0...v1.1.0

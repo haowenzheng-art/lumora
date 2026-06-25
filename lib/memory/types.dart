@@ -81,6 +81,11 @@ class MemoryEvent {
   /// 是否永不沉睡（seed=true，derived=false）
   final bool permadormant;
 
+  /// 用户钉住的永久唤醒（v1.3）：true 表示这条 derived 事件被用户从 dormant 池
+  /// 钉住，永不沉睡。与 permadormant 区别：permadormant 是 seed/finalWords 专属，
+  /// wakified 是 derived 被用户手动钉住。
+  final bool wakified;
+
   /// 事件种类（v1.2）：regular 或 finalWords
   final EventKind kind;
 
@@ -96,6 +101,7 @@ class MemoryEvent {
     required this.lastUsedAt,
     required this.dormant,
     required this.permadormant,
+    this.wakified = false,
     this.kind = EventKind.regular,
   });
 
@@ -113,6 +119,7 @@ class MemoryEvent {
         lastUsedAt: (j['lastUsedAt'] as num?)?.toInt() ?? 0,
         dormant: (j['dormant'] as bool?) ?? false,
         permadormant: (j['permadormant'] as bool?) ?? false,
+        wakified: (j['wakified'] as bool?) ?? false,
         kind: _parseKind(j['kind'] as String?),
       );
 
@@ -128,6 +135,7 @@ class MemoryEvent {
         'lastUsedAt': lastUsedAt,
         'dormant': dormant,
         'permadormant': permadormant,
+        'wakified': wakified,
         'kind': _kindToString(kind),
       };
 
@@ -145,6 +153,7 @@ class MemoryEvent {
     int? lastUsedAt,
     bool? dormant,
     bool? permadormant,
+    bool? wakified,
     EventKind? kind,
   }) =>
       MemoryEvent(
@@ -159,6 +168,7 @@ class MemoryEvent {
         lastUsedAt: lastUsedAt ?? this.lastUsedAt,
         dormant: dormant ?? this.dormant,
         permadormant: permadormant ?? this.permadormant,
+        wakified: wakified ?? this.wakified,
         kind: kind ?? this.kind,
       );
 

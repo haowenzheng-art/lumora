@@ -26,7 +26,7 @@ class MemoryDecay {
   Future<int> runOnce() async {
     final all = await store.readAllEvents();
     final activeDerived = all.where((e) =>
-        e.source == EventSource.derived && !e.dormant && !e.permadormant).toList();
+        e.source == EventSource.derived && !e.dormant && !e.permadormant && !e.wakified).toList();
     if (activeDerived.length <= softLimit) return 0;
 
     final overflow = activeDerived.length - softLimit;
