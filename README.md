@@ -58,6 +58,13 @@ Lumora 是一个 Windows 桌面应用，用 AI 生成精灵形象与声音，让
 
 用户表达"活着没意思""不想活了"等明确自伤信号时，精灵破出角色输出 `[[CRISIS_BREAK]]` 标记，由 agent 层替换为破出语并引导求助。模糊语境走关切性追问，不直接破出。
 
+### 6. 声音（v2.0 核心）
+
+- **火山引擎豆包语音克隆**：上传 3-10s 参考音频，克隆出接近 ta 的声音。或选预设音色（温柔女声 / 沉稳男声 / 清亮少年）。
+- **手动触发**：精灵消息气泡下方"听 ta 说"按钮，用户主动点击才合成。不自动播，省成本 + 仪式感 + 宪法缓解。
+- **文件系统缓存**：同一条消息只合成一次，二次点击秒回。
+- **宪法缓解三层**：Onboarding 选克隆时确认卡 + 首次播放一次性 toast + 按钮旁常驻"· AI 生成"小字。声音是思念具象化最强的触发器，也是去人化风险最高的能力——手动触发让用户主动选择听，而不是被动灌输。
+
 ---
 
 ## 截图
@@ -113,7 +120,7 @@ Lumora 是一个 Windows 桌面应用，用 AI 生成精灵形象与声音，让
 
 ### 配置
 
-在项目根创建两个文件（**不会提交到 git**，已在 `.gitignore`）：
+在项目根创建三个文件（**不会提交到 git**，已在 `.gitignore`）：
 
 ```text
 agnes.txt
@@ -126,6 +133,13 @@ Model：agnes-image-2.1-flash
 lumora.txt
 API：你的_ark_key
 ```
+
+```text
+voice.txt
+API：你的_火山引擎语音_key
+```
+
+`voice.txt` 用于 v2.0 TTS 声音克隆 + 语音合成（火山引擎豆包）。与 ARK 是火山不同产品线，鉴权方式可能不同，单独配置。
 
 ### 运行
 
@@ -157,6 +171,7 @@ lib/
   prompt.dart            # system prompt 构建（区分 demo 小雨与自定义精灵）
   llm.dart               # ARK LLM 调用
   agnes.dart             # Agnes 图像 + 视频生成
+  voice.dart             # v2.0 火山豆包 TTS + 声音克隆 + VoicePlayer
   crisis.dart            # 危机拦截
   sprite_view.dart       # 精灵视图（图层合成 + 眨眼 + tilt）
   sprite_parts.dart      # 图层分解预处理（isolate）
@@ -192,7 +207,7 @@ CHANGELOG.md             # 更新日志
 
 ## 版本
 
-当前版本：**v1.3.0**
+当前版本：**v2.0.0**
 
 详见 [`CHANGELOG.md`](./CHANGELOG.md)。
 

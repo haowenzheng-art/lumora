@@ -22,6 +22,7 @@ import 'loop_video_view.dart';
 import 'memory/memory_service.dart';
 import 'memory/migrate.dart';
 import 'memory/types.dart';
+import 'voice.dart';
 
 void main() {
   MediaKit.ensureInitialized();
@@ -172,6 +173,33 @@ class _SplashPageState extends State<SplashPage> {
     await memory.writeProfile(setup.profile);
     await memory.replaceSeedEvents(setup.seedEvents);
     await memory.writeFinalWords(setup.finalWords);
+
+    // v2.0: 保存声音配置
+    if (setup.voiceConfig != null) {
+      final vc = setup.voiceConfig!;
+      if (vc.isClone && vc.voiceId.isEmpty) {
+        // 克隆真人声音：需要训练
+        if (!mounted) return;
+        final voiceId = await showDialog<String>(
+          context: context,
+          barrierDismissible: false,
+          builder: (_) => _VoiceCloneProgressDialog(recPath: vc.voiceRecPath!),
+        );
+        if (voiceId != null && voiceId.isNotEmpty) {
+          await memory.setVoiceConfig(VoiceConfig(
+            voiceId: voiceId,
+            voicePreset: 'clone',
+            voiceRecPath: vc.voiceRecPath,
+          ));
+        } else if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('声音克隆失败，可稍后在记忆编辑页重试。')),
+          );
+        }
+      } else {
+        await memory.setVoiceConfig(vc);
+      }
+    }
 
     if (isCustom) {
       await addSpriteToIndex(SpriteRecord(
@@ -945,11 +973,13 @@ class MemorySetupResult {
   final String profile;
   final List<MemoryEvent> seedEvents;
   final String finalWords;
+  final VoiceConfig? voiceConfig;
 
   MemorySetupResult({
     required this.profile,
     required this.seedEvents,
     this.finalWords = '',
+    this.voiceConfig,
   });
 }
 
@@ -1032,6 +1062,11 @@ class _MemoryOnboardingPageState extends State<MemoryOnboardingPage> {
   // v1.3: 沉睡的记忆列表（仅 editMode 下加载）
   List<MemoryEvent> _dormant = [];
 
+  // v2.0: 声音配置
+  bool _voiceMode = false; // false=预设音色, true=克隆真人
+  String _selectedPreset = voicePresets.first;
+  String? _cloneAudioPath;
+
   @override
   void initState() {
     super.initState();
@@ -1060,7 +1095,28 @@ class _MemoryOnboardingPageState extends State<MemoryOnboardingPage> {
     // v1.3: editMode 下加载 dormant 列表
     if (widget.editMode) {
       _refreshDormant();
+      _loadVoiceConfig(); // v2.0
     }
+  }
+
+  // v2.0: 加载已有声音配置
+  Future<void> _loadVoiceConfig() async {
+    final c = await _memory.readVoiceConfig();
+    if (mounted && c != null) {
+      setState(() {
+        _voiceMode = c.isClone;
+        _selectedPreset =
+            c.voicePreset.isEmpty ? voicePresets.first : c.voicePreset;
+        _cloneAudioPath = c.voiceRecPath;
+      });
+    }
+  }
+
+  // v2.0: 选择参考音频
+  Future<void> _pickCloneAudio() async {
+    final result = await FilePicker.platform.pickFiles(type: FileType.audio);
+    if (result == null || result.files.single.path == null) return;
+    setState(() => _cloneAudioPath = result.files.single.path);
   }
 
   Future<void> _refreshDormant() async {
@@ -1125,12 +1181,28 @@ class _MemoryOnboardingPageState extends State<MemoryOnboardingPage> {
     collect(_traits, '性格');
     collect(_unfinished, '未完成');
 
+    // v2.0: 构造 voiceConfig
+    VoiceConfig? voiceConfig;
+    if (_voiceMode && _cloneAudioPath != null) {
+      voiceConfig = VoiceConfig(
+        voiceId: '', // 待训练，_afterSpirit 里填
+        voicePreset: 'clone',
+        voiceRecPath: _cloneAudioPath,
+      );
+    } else if (!_voiceMode) {
+      voiceConfig = VoiceConfig(
+        voiceId: _selectedPreset,
+        voicePreset: _selectedPreset,
+      );
+    }
+
     Navigator.pop(
       context,
       MemorySetupResult(
         profile: _profile.text.trim(),
         seedEvents: events,
         finalWords: _finalWords.text.trim(),
+        voiceConfig: voiceConfig,
       ),
     );
   }
@@ -1182,6 +1254,11 @@ class _MemoryOnboardingPageState extends State<MemoryOnboardingPage> {
                           const SizedBox(height: 10),
                           _buildDormantList(),
                         ],
+                        const SizedBox(height: 28),
+                        _buildSectionTitle('7', '声音',
+                            '让 ta 能被听见。可以用预设音色，也可以克隆一个接近 ta 的声音。'),
+                        const SizedBox(height: 10),
+                        _buildVoiceSection(),
                         const SizedBox(height: 24),
                         Center(child: _PrimaryButton(label: primary, onTap: _confirm)),
                         if (!widget.editMode) ...[
@@ -1555,6 +1632,302 @@ class _MemoryOnboardingPageState extends State<MemoryOnboardingPage> {
                     ),
                   ),
                 ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ============ v2.0: 声音 section ============
+
+  Widget _buildVoiceSection() {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: LumoraColors.glass,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: LumoraColors.glassBorder, width: 0.8),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // 选项 A：预设音色
+          _buildVoiceOption(
+            selected: !_voiceMode,
+            onTap: () => setState(() => _voiceMode = false),
+            title: '用预设音色',
+            subtitle: '快速可用，不是 ta 本人的声音',
+          ),
+          if (!_voiceMode) ...[
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: voicePresets.map((p) {
+                final sel = _selectedPreset == p;
+                return GestureDetector(
+                  onTap: () => setState(() => _selectedPreset = p),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 14, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: sel
+                          ? LumoraColors.amber.withValues(alpha: 0.82)
+                          : LumoraColors.glass,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: sel
+                            ? LumoraColors.amber
+                            : LumoraColors.glassBorder,
+                        width: 0.5,
+                      ),
+                    ),
+                    child: Text(
+                      p,
+                      style: TextStyle(
+                        color: sel
+                            ? LumoraColors.bgBottom
+                            : LumoraColors.textSecondary,
+                        fontSize: 12,
+                        letterSpacing: 1,
+                      ),
+                    ),
+                  ),
+                );
+              }).toList(),
+            ),
+          ],
+          const SizedBox(height: 14),
+          // 选项 B：克隆真人声音
+          _buildVoiceOption(
+            selected: _voiceMode,
+            onTap: () => setState(() => _voiceMode = true),
+            title: '克隆真人声音',
+            subtitle: '上传 3-10s 参考音频，最能还原 ta',
+            highlight: true,
+          ),
+          if (_voiceMode) ...[
+            const SizedBox(height: 10),
+            if (_cloneAudioPath == null)
+              _buildCloneConfirmCard()
+            else
+              _buildCloneReadyCard(),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildVoiceOption({
+    required bool selected,
+    required VoidCallback onTap,
+    required String title,
+    required String subtitle,
+    bool highlight = false,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: selected
+              ? LumoraColors.amber.withValues(alpha: 0.12)
+              : Colors.transparent,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: selected
+                ? LumoraColors.amber.withValues(alpha: 0.6)
+                : LumoraColors.glassBorder,
+            width: 0.5,
+          ),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              selected
+                  ? Icons.radio_button_checked
+                  : Icons.radio_button_unchecked,
+              color: selected
+                  ? LumoraColors.amber
+                  : LumoraColors.textMuted,
+              size: 18,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Text(
+                        title,
+                        style: const TextStyle(
+                          color: LumoraColors.textPrimary,
+                          fontSize: 13,
+                          letterSpacing: 1,
+                        ),
+                      ),
+                      if (highlight) ...[
+                        const SizedBox(width: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: LumoraColors.amber.withValues(alpha: 0.2),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: const Text(
+                            '推荐',
+                            style: TextStyle(
+                              color: LumoraColors.amber,
+                              fontSize: 9,
+                              letterSpacing: 1,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    subtitle,
+                    style: const TextStyle(
+                      color: LumoraColors.textMuted,
+                      fontSize: 10,
+                      height: 1.5,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 克隆确认卡（首次选 clone 且未选音频时显示）
+  Widget _buildCloneConfirmCard() {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: LumoraColors.amber.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: LumoraColors.amber.withValues(alpha: 0.3),
+          width: 0.5,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            '你正在为 ta 克隆一个声音。',
+            style: TextStyle(
+              color: LumoraColors.amber,
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+              letterSpacing: 1,
+            ),
+          ),
+          const SizedBox(height: 6),
+          const Text(
+            '这个声音由 AI 基于你提供的参考音频生成，不是 ta 本人的声音。'
+            '听到这个声音可能会让你产生强烈情绪反应。'
+            '如果你感到难以承受，可以随时在记忆编辑页关闭声音。',
+            style: TextStyle(
+              color: LumoraColors.textSecondary,
+              fontSize: 10,
+              height: 1.6,
+              letterSpacing: 0.5,
+            ),
+          ),
+          const SizedBox(height: 10),
+          GestureDetector(
+            onTap: _pickCloneAudio,
+            child: Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              decoration: BoxDecoration(
+                color: LumoraColors.amber,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.upload_file,
+                      color: LumoraColors.bgBottom, size: 14),
+                  SizedBox(width: 6),
+                  Text(
+                    '选择参考音频（3-10s，清晰人声）',
+                    style: TextStyle(
+                      color: LumoraColors.bgBottom,
+                      fontSize: 11,
+                      letterSpacing: 1,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 已选参考音频后的卡片
+  Widget _buildCloneReadyCard() {
+    final name = _cloneAudioPath!.split(RegExp(r'[/\\]')).last;
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: LumoraColors.glass,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: LumoraColors.amber.withValues(alpha: 0.4),
+          width: 0.5,
+        ),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.graphic_eq,
+              color: LumoraColors.amber, size: 18),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  '已选参考音频',
+                  style: TextStyle(
+                    color: LumoraColors.textPrimary,
+                    fontSize: 11,
+                    letterSpacing: 1,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  name,
+                  style: const TextStyle(
+                    color: LumoraColors.textMuted,
+                    fontSize: 10,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+          GestureDetector(
+            onTap: _pickCloneAudio,
+            child: const Text(
+              '重选',
+              style: TextStyle(
+                color: LumoraColors.amber,
+                fontSize: 11,
+                letterSpacing: 1,
               ),
             ),
           ),
@@ -2889,6 +3262,7 @@ class _ChatPageState extends State<ChatPage> with TickerProviderStateMixin {
                       return _MessageBubble(
                         message: _messages[i],
                         spiritName: widget.spiritName,
+                        spiritId: _spiritId,
                       );
                     },
                   ),
@@ -3195,14 +3569,104 @@ class _Message {
   _Message({required this.role, required this.content});
 }
 
-class _MessageBubble extends StatelessWidget {
+class _MessageBubble extends StatefulWidget {
   final _Message message;
   final String spiritName;
-  const _MessageBubble({required this.message, required this.spiritName});
+  final String spiritId;
+  const _MessageBubble({
+    required this.message,
+    required this.spiritName,
+    required this.spiritId,
+  });
+
+  @override
+  State<_MessageBubble> createState() => _MessageBubbleState();
+}
+
+class _MessageBubbleState extends State<_MessageBubble> {
+  final VoicePlayer _player = VoicePlayer();
+  bool _loading = false;
+  bool _firstPlayToastShown = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _player.onComplete = () {
+      if (mounted) setState(() {});
+    };
+  }
+
+  @override
+  void dispose() {
+    _player.dispose();
+    super.dispose();
+  }
+
+  String get _msgId => '${widget.spiritId}_${widget.message.content.hashCode.abs()}';
+
+  Future<void> _playTts() async {
+    if (_loading) return;
+
+    // 首次播放一次性 toast（宪法缓解）
+    if (!_firstPlayToastShown) {
+      _firstPlayToastShown = true;
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('这是 AI 生成的声音，不是 ta 本人。'),
+            duration: Duration(seconds: 3),
+          ),
+        );
+      }
+    }
+
+    setState(() => _loading = true);
+    try {
+      // 缓存命中
+      final cached = await cachedTtsPath(widget.spiritId, _msgId);
+      if (cached != null) {
+        await _player.play(cached);
+        if (mounted) setState(() {});
+        return;
+      }
+
+      // 未配置音色
+      final memory = MemoryService(spiritId: widget.spiritId);
+      final config = await memory.readVoiceConfig();
+      if (config == null || config.voiceId.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('还没为 ta 配置声音。打开记忆编辑页第 7 节选一个。'),
+              duration: Duration(seconds: 3),
+            ),
+          );
+        }
+        return;
+      }
+
+      // 合成新音频
+      final mp3 = await synthesizeVoice(widget.message.content, config.voiceId);
+      final path = await saveTtsAudio(widget.spiritId, _msgId, mp3);
+      await _player.play(path);
+      if (mounted) setState(() {});
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('合成失败：$e'),
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    final isUser = message.role == 'user';
+    final isUser = widget.message.role == 'user';
     return Container(
       margin: const EdgeInsets.symmetric(vertical: 8),
       child: Row(
@@ -3211,7 +3675,7 @@ class _MessageBubble extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           if (!isUser) ...[
-            _Avatar(name: spiritName),
+            _Avatar(name: widget.spiritName),
             const SizedBox(width: 12),
           ],
           Flexible(
@@ -3240,14 +3704,73 @@ class _MessageBubble extends StatelessWidget {
                       width: 0.5,
                     ),
                   ),
-                  child: Text(
-                    message.content,
-                    style: const TextStyle(
-                      color: LumoraColors.textPrimary,
-                      fontSize: 14,
-                      height: 1.6,
-                      letterSpacing: 0.2,
-                    ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        widget.message.content,
+                        style: const TextStyle(
+                          color: LumoraColors.textPrimary,
+                          fontSize: 14,
+                          height: 1.6,
+                          letterSpacing: 0.2,
+                        ),
+                      ),
+                      // v2.0: 精灵消息下方"听 ta 说"按钮
+                      if (!isUser) ...[
+                        const SizedBox(height: 8),
+                        GestureDetector(
+                          onTap: _loading ? null : _playTts,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: LumoraColors.glass,
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(
+                                color: LumoraColors.glassBorder,
+                                width: 0.5,
+                              ),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  _loading
+                                      ? Icons.hourglass_top
+                                      : (_player.isPlaying
+                                          ? Icons.pause_circle
+                                          : Icons.volume_up),
+                                  size: 12,
+                                  color: LumoraColors.amber,
+                                ),
+                                const SizedBox(width: 4),
+                                Text(
+                                  _loading
+                                      ? '合成中…'
+                                      : (_player.isPlaying
+                                          ? '播放中'
+                                          : '听 ta 说'),
+                                  style: const TextStyle(
+                                    color: LumoraColors.textSecondary,
+                                    fontSize: 10,
+                                    letterSpacing: 1,
+                                  ),
+                                ),
+                                const SizedBox(width: 4),
+                                const Text(
+                                  '· AI 生成',
+                                  style: TextStyle(
+                                    color: LumoraColors.textMuted,
+                                    fontSize: 8,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
                 ),
               ),
@@ -3519,6 +4042,121 @@ class _FloatingParticleState extends State<_FloatingParticle>
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+// ============================================================
+// v2.0: 声音克隆进度弹窗
+// ============================================================
+
+class _VoiceCloneProgressDialog extends StatefulWidget {
+  final String recPath;
+  const _VoiceCloneProgressDialog({required this.recPath});
+
+  @override
+  State<_VoiceCloneProgressDialog> createState() =>
+      _VoiceCloneProgressDialogState();
+}
+
+class _VoiceCloneProgressDialogState extends State<_VoiceCloneProgressDialog> {
+  int _progress = 0;
+  String _status = '正在上传参考音频…';
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _runClone();
+  }
+
+  Future<void> _runClone() async {
+    try {
+      setState(() => _status = '正在创建克隆任务…');
+      final taskId = await createVoiceCloneTask(widget.recPath);
+      setState(() => _status = '正在训练声音，大约需要几分钟…');
+      final voiceId = await pollVoiceCloneUntilDone(
+        taskId,
+        onProgress: (p) {
+          if (mounted) setState(() => _progress = p);
+        },
+      );
+      if (mounted) Navigator.pop(context, voiceId);
+    } catch (e) {
+      if (mounted) {
+        setState(() => _error = e.toString());
+        await Future.delayed(const Duration(seconds: 3));
+        if (mounted) Navigator.pop(context, null);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return PopScope(
+      canPop: _error != null,
+      child: AlertDialog(
+        backgroundColor: const Color(0xFF1A2138),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (_error != null) ...[
+              const Icon(Icons.error_outline,
+                  color: Colors.redAccent, size: 40),
+              const SizedBox(height: 12),
+              const Text(
+                '克隆失败',
+                style: TextStyle(
+                  color: Colors.redAccent,
+                  fontSize: 14,
+                  letterSpacing: 1,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                _error!,
+                style: const TextStyle(
+                  fontSize: 10,
+                  color: Colors.white54,
+                  height: 1.5,
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ] else ...[
+              const SizedBox(
+                width: 32,
+                height: 32,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: LumoraColors.amber,
+                ),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                _status,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 13,
+                  letterSpacing: 1,
+                ),
+              ),
+              if (_progress > 0) ...[
+                const SizedBox(height: 8),
+                Text(
+                  '$_progress%',
+                  style: const TextStyle(
+                    fontSize: 11,
+                    color: Colors.white54,
+                  ),
+                ),
+              ],
+            ],
+          ],
         ),
       ),
     );

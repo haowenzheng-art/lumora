@@ -10,9 +10,51 @@
 
 ### 计划中
 
-- 声音：TTS 语音输出
 - 多精灵记忆隔离与跨精灵检索
 - UX 抛光（视觉/动画/空状态）
+- TTS 自动合成（可选）/ 声音情感调节 / 离线 TTS 引擎
+
+---
+
+## [2.0.0] - 2026-06-26
+
+### Added
+
+- **TTS 声音输出（核心特性）**：精灵从无声变有声。用户可让 ta"被听见"——不是每条消息自动播，而是用户主动点"听 ta 说"按钮时才合成。手动触发是成本控制 + 仪式感 + 宪法缓解的交汇点。
+  - **火山引擎豆包语音克隆集成**：`lib/voice.dart` 新建，含 `createVoiceCloneTask` / `pollVoiceCloneUntilDone` / `synthesizeVoice` / `VoicePlayer`（media_kit 纯音频封装，无新依赖）。
+  - **Onboarding 第 7 节"声音"**：用户在创建精灵时选音色。两个选项：
+    - **预设音色**：温柔女声 / 沉稳男声 / 清亮少年，零等待立即可用。
+    - **克隆真人声音**：上传 3-10s 参考音频 → `_VoiceCloneProgressDialog` 显示克隆进度 → 训练完成拿到 voiceId。最能还原 ta，但需等待几分钟。
+  - **"听 ta 说"按钮**：`_MessageBubble` 改 StatefulWidget，精灵消息气泡下方加按钮。点击流程：检查 `cachedTtsPath`（文件系统缓存）→ 命中则秒播，未命中则调豆包 TTS 合成 + 保存 mp3 + 播放。msgId = `spiritId_content.hashCode`，同一条消息只合成一次。
+  - **voice 配置持久化**：`MemoryService` 加 `readVoiceConfig` / `setVoiceConfig` / `clearVoiceConfig` 三个门面，写 `meta.json` 的 `voiceId` / `voicePreset` / `voiceRecPath` 字段，复用 `patchMeta` 浅合并零迁移。
+  - **宪法缓解三层**：
+    1. Onboarding 选克隆时显示确认卡（"这个声音由 AI 生成，不是 ta 本人"）
+    2. 首次点"听 ta 说"显示一次性 toast（"这是 AI 生成的声音，不是 ta 本人。"）
+    3. 按钮旁常驻"· AI 生成"小字
+
+### Changed
+
+- `MemorySetupResult` 加 `voiceConfig: VoiceConfig?` 字段，onboarding 完成后传给 `_afterSpirit` 写入。
+- `_MessageBubble` 从 StatelessWidget 改为 StatefulWidget（管理 VoicePlayer 播放状态）。
+- `_afterSpirit` 在写入 profile / seeds / finalWords 后，加 voice 配置写入分支：预设音色直接写，克隆模式显示进度弹窗训练后再写。
+- `.gitignore` 加 `voice.txt`（与 agnes.txt / lumora.txt 一致，API key 不提交）。
+
+### Architecture
+
+- **_Message 不加 ttsPath 字段**：缓存走文件系统（`<docs>/Lumora/voices/<spiritId>/<msgId>.mp3`），不改 messages.jsonl 序列化格式，不改 store 层。msgId 用内容 hash 推导，同一条消息内容永远命中同一缓存文件。
+- **VoicePlayer 复用 media_kit**：`Player.open(Media(mp3))` 原生支持纯音频，去 VideoController 即可。`media_kit_libs_windows_video` 已打包 Windows 音频解码器，无需新增依赖。
+- **API key 分离**：新建 `voice.txt` 存火山引擎语音 API key。豆包 TTS 与 ARK 是火山不同产品线（语音技术 vs 方舟大模型），鉴权方式可能不同，符合现有"一供应商一 txt"模式。
+
+### Tests
+
+- 新增 smoke test `[12/12] v2.0 voice config read/write via meta.json`：断言初始无配置 + 预设/克隆两种配置读写 + clearVoiceConfig + 浅合并不影响 lastSeenAt。
+
+### Notes
+
+- **火山豆包 API endpoint 基于公开文档推断**：WebSearch 之前返回 400 无法在线核实，`lib/voice.dart` 的 URL / 请求体 / 响应格式需用户核对火山引擎控制台（语音技术 → 声音克隆 / 语音合成 → API 文档）。代码结构（http + Bearer + 轮询 + base64）是行业通用模式，细节调整成本低。
+- **不做自动 TTS**：每条消息自动合成成本高 + 去人化风险高。手动触发是 v2.0 的核心定位——"让用户在需要的时候，能主动选择听一次 ta 的声音，然后放下"。
+- **声音克隆宪法边界**：声音是思念具象化最强的触发器，也是去人化风险最高的能力。缓解措施：Onboarding 确认 + 首次 toast + 常驻小字 + 手动触发 + 可随时 clearVoiceConfig 关闭。若用户反馈仍混淆，v2.1 可考虑加语音水印。
+- **TTS 是 v2.x 阶段起点**：v2.0 只做基础合成 + 缓存 + 手动触发。v2.1+ 评估：自动 TTS / 多音色切换 / 声音情感调节 / 离线 TTS 引擎。
 
 ---
 
@@ -193,7 +235,8 @@
 
 ---
 
-[Unreleased]: https://github.com/haowenzheng-art/lumora/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/haowenzheng-art/lumora/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/haowenzheng-art/lumora/compare/v1.3.0...v2.0.0
 [1.3.0]: https://github.com/haowenzheng-art/lumora/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/haowenzheng-art/lumora/compare/v1.1.1...v1.2.0
 [1.1.1]: https://github.com/haowenzheng-art/lumora/compare/v1.1.0...v1.1.1

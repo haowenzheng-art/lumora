@@ -27,6 +27,7 @@ import 'package:lumora/memory/retriever.dart';
 import 'package:lumora/memory/store.dart';
 import 'package:lumora/memory/types.dart';
 import 'package:lumora/prompt.dart';
+import 'package:lumora/voice.dart';
 
 void main() {
   late Directory tmp;
@@ -542,6 +543,55 @@ weight: 中
     // dormant 仍为 false（unwakify 不主动沉睡，只是移除保护）
     expect(unpinned.dormant, false,
         reason: 'unwakify 不主动沉睡，只是移除保护，下次 decay 才会沉睡');
+  });
+
+  test('[12/12] v2.0 voice config read/write via meta.json', () async {
+    final service =
+        MemoryService(spiritId: 'voice_test', baseDirOverride: tmp);
+
+    expect(await service.readVoiceConfig(), null,
+        reason: '初始无 voice 配置');
+
+    // 写入预设音色配置
+    await service.setVoiceConfig(const VoiceConfig(
+      voiceId: 'preset_gentle_female',
+      voicePreset: '温柔女声',
+    ));
+    final cfg1 = await service.readVoiceConfig();
+    expect(cfg1, isNotNull, reason: '写入后能读到');
+    expect(cfg1!.voiceId, 'preset_gentle_female');
+    expect(cfg1.voicePreset, '温柔女声');
+    expect(cfg1.voiceRecPath, null, reason: '预设音色无参考音频路径');
+    expect(cfg1.isClone, false, reason: '预设音色 isClone=false');
+
+    // 写入克隆真人声音配置
+    await service.setVoiceConfig(const VoiceConfig(
+      voiceId: 'clone_xxxx',
+      voicePreset: 'clone',
+      voiceRecPath: '/path/to/ref.wav',
+    ));
+    final cfg2 = await service.readVoiceConfig();
+    expect(cfg2, isNotNull);
+    expect(cfg2!.voiceId, 'clone_xxxx');
+    expect(cfg2.voicePreset, 'clone');
+    expect(cfg2.voiceRecPath, '/path/to/ref.wav');
+    expect(cfg2.isClone, true, reason: '克隆模式 isClone=true');
+
+    // 清除配置
+    await service.clearVoiceConfig();
+    expect(await service.readVoiceConfig(), null,
+        reason: 'clearVoiceConfig 后 readVoiceConfig 返回 null');
+
+    // 验证 meta.json 浅合并：其他字段不受影响
+    final store = service.store;
+    await store.patchMeta({'lastSeenAt': 12345});
+    await service.setVoiceConfig(const VoiceConfig(
+      voiceId: 'vid2',
+      voicePreset: '沉稳男声',
+    ));
+    final meta = await store.readMeta();
+    expect(meta['lastSeenAt'], 12345, reason: 'voice 写入不影响 lastSeenAt');
+    expect(meta['voiceId'], 'vid2');
   });
 }
 

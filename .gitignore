@@ -51,6 +51,7 @@ app.*.map.json
 # API key 文件（绝对不能提交）
 agnes.txt
 lumora.txt
+voice.txt
 *.env
 .env
 secrets.json

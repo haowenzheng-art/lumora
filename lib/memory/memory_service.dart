@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import '../voice.dart';
 import 'decay.dart';
 import 'extractor.dart';
 import 'retriever.dart';
@@ -292,6 +293,38 @@ class MemoryService {
       }
     }
     await store.updateEvents(patches);
+  }
+
+  // ============ v2.0: 声音配置 ============
+
+  /// 读取声音配置。未配置返回 null。
+  Future<VoiceConfig?> readVoiceConfig() async {
+    final meta = await store.readMeta();
+    final voiceId = meta['voiceId'] as String?;
+    if (voiceId == null || voiceId.isEmpty) return null;
+    return VoiceConfig(
+      voiceId: voiceId,
+      voicePreset: (meta['voicePreset'] as String?) ?? '',
+      voiceRecPath: meta['voiceRecPath'] as String?,
+    );
+  }
+
+  /// 写入声音配置（浅合并到 meta.json）。
+  Future<void> setVoiceConfig(VoiceConfig config) async {
+    await store.patchMeta({
+      'voiceId': config.voiceId,
+      'voicePreset': config.voicePreset,
+      if (config.voiceRecPath != null) 'voiceRecPath': config.voiceRecPath,
+    });
+  }
+
+  /// 清除声音配置（用户在记忆编辑页删除音色时调用）。
+  Future<void> clearVoiceConfig() async {
+    await store.patchMeta({
+      'voiceId': '',
+      'voicePreset': '',
+      'voiceRecPath': null,
+    });
   }
 
   String _fallbackTitle(String summary) {
