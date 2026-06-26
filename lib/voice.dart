@@ -1,10 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:http/http.dart' as http;
 import 'package:media_kit/media_kit.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
 
 /// v2.0 TTS 声音输出
 ///
@@ -22,12 +24,19 @@ const _voiceCloneQueryUrl = 'https://openspeech.bytedance.com/api/v1/voice_clone
 const _ttsUrl = 'https://openspeech.bytedance.com/api/v1/tts';
 
 /// 预设音色列表（onboarding 选项 A 用）。
-/// voiceId 为空时，onboarding 保存时填入火山豆包对应预设 ID。
+/// v2.1 起预设音色走 Edge TTS（免费免 key）；克隆走火山豆包（需 voice.txt）。
 const voicePresets = <String>['温柔女声', '沉稳男声', '清亮少年'];
+
+/// 预设音色 → Edge TTS voice 名映射
+const _edgeVoiceMap = <String, String>{
+  '温柔女声': 'zh-CN-XiaoxiaoNeural',
+  '沉稳男声': 'zh-CN-YunxiNeural',
+  '清亮少年': 'zh-CN-XiaoyiNeural',
+};
 
 /// 声音配置（存 meta.json）
 class VoiceConfig {
-  final String voiceId;        // 火山豆包 voiceId（克隆完成返回 / 预设 ID）
+  final String voiceId;        // 火山豆包 voiceId（克隆完成返回）
   final String voicePreset;    // 'clone' | 预设名（温柔女声 等）
   final String? voiceRecPath;  // 克隆时的参考音频本地路径（可空）
 
@@ -38,6 +47,7 @@ class VoiceConfig {
   });
 
   bool get isClone => voicePreset == 'clone';
+  bool get isPreset => !isClone && voicePreset.isNotEmpty;
 }
 
 /// 从 voice.txt 读 API key（照 agnes.dart L51-80 模式）
@@ -157,11 +167,24 @@ Future<String> pollVoiceCloneUntilDone(
 }
 
 // ============================================================
-// TTS 合成
+// TTS 合成（分流：克隆→火山豆包，预设→Edge TTS 免费）
 // ============================================================
 
-/// 用 voiceId 合成文本，返回 mp3 bytes
-Future<List<int>> synthesizeVoice(String text, String voiceId) async {
+/// 按 VoiceConfig 合成文本，返回 mp3 bytes。
+/// - isClone → 火山豆包（需 voice.txt）
+/// - isPreset → Edge TTS（免费免 key）
+Future<List<int>> synthesizeVoice(String text, VoiceConfig config) async {
+  if (config.isClone) {
+    return _synthesizeWithVolc(text, config.voiceId);
+  }
+  if (config.isPreset) {
+    return EdgeTtsClient.synthesize(text, config.voicePreset);
+  }
+  throw Exception('VoiceConfig 既非 clone 也非 preset: ${config.voicePreset}');
+}
+
+/// 火山豆包 TTS 合成（克隆音色专用）
+Future<List<int>> _synthesizeWithVolc(String text, String voiceId) async {
   final apiKey = await _loadApiKey();
   final resp = await http.post(
     Uri.parse(_ttsUrl),
@@ -185,6 +208,124 @@ Future<List<int>> synthesizeVoice(String text, String voiceId) async {
     throw Exception('TTS 未返回音频: ${resp.body}');
   }
   return base64Decode(audioStr);
+}
+
+// ============================================================
+// Edge TTS（微软免费 TTS，无需 API key）
+//
+// 通过 wss://speech.platform.bing.com 的 WebSocket 协议调用。
+// 协议要点：
+//   1. 连接时带 TrustedClientToken + ConnectionId
+//   2. 发送 speech.config 消息（指定 outputFormat）
+//   3. 发送 ssml 消息（含 voice name + 文本）
+//   4. 接收二进制音频帧（前 2 字节 type, 2 字节 length, 后是 payload）
+//   5. 接收 Path:turn.end 表示结束
+//
+// Token 是微软公开的 Edge 浏览器读屏 token，非密钥。
+// ============================================================
+
+class EdgeTtsClient {
+  static const _wsUrl =
+      'wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1';
+  static const _token = '6A5AA1D4EAFF4E9FB37E23D68482D6F5';
+
+  /// 合成文本，返回 mp3 bytes
+  static Future<List<int>> synthesize(
+    String text,
+    String presetName, {
+    Duration timeout = const Duration(seconds: 30),
+  }) async {
+    final voice = _edgeVoiceMap[presetName] ?? 'zh-CN-XiaoxiaoNeural';
+    final connId = _uuidV4NoDash();
+    final uri = Uri.parse('$_wsUrl?TrustedClientToken=$_token&ConnectionId=$connId');
+
+    final channel = WebSocketChannel.connect(uri);
+
+    // 1. 发送 speech.config
+    final configTs = _timestamp();
+    final configMsg =
+        'X-Timestamp:$configTs\r\nContent-Type:application/json; charset=utf-8\r\nPath:speech.config\r\n\r\n'
+        '{"context":{"synthesis":{"audio":{"metadataoptions":{"sentenceBoundaryEnabled":"false","wordBoundaryEnabled":"false"},"outputFormat":"audio-24khz-48kbitrate-mono-mp3"}}}}';
+    channel.sink.add(configMsg);
+
+    // 2. 发送 ssml
+    final reqId = _uuidV4NoDash();
+    final ssmlTs = _timestamp();
+    final escaped = _escapeXml(text);
+    final ssml =
+        "<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='zh-CN'>"
+        "<voice name='$voice'>$escaped</voice></speak>";
+    final ssmlMsg =
+        'X-RequestId:$reqId\r\nContent-Type:application/ssml+xml\r\n'
+        'X-Timestamp:$ssmlTs\r\nPath:ssml\r\n\r\n$ssml';
+    channel.sink.add(ssmlMsg);
+
+    // 3. 接收音频帧 + 等待 turn.end
+    final audio = <int>[];
+    final completer = Completer<List<int>>();
+    late StreamSubscription sub;
+    sub = channel.stream.listen(
+      (msg) {
+        if (msg is String) {
+          if (msg.contains('Path:turn.end')) {
+            sub.cancel();
+            channel.sink.close();
+            if (!completer.isCompleted) completer.complete(audio);
+          }
+        } else if (msg is List<int>) {
+          // 二进制帧：前 2 字节 type（大端 uint16）, 2 字节 length, 后是 payload
+          if (msg.length >= 4) {
+            final typeHi = msg[0];
+            if (typeHi == 0x02) {
+              // 音频帧
+              final len = (msg[2] << 8) | msg[3];
+              if (msg.length >= 4 + len) {
+                audio.addAll(msg.sublist(4, 4 + len));
+              }
+            }
+          }
+        }
+      },
+      onError: (e) {
+        sub.cancel();
+        if (!completer.isCompleted) completer.completeError(e);
+      },
+      onDone: () {
+        sub.cancel();
+        if (!completer.isCompleted) completer.complete(audio);
+      },
+    );
+
+    try {
+      return await completer.future.timeout(timeout);
+    } catch (e) {
+      await sub.cancel();
+      try {
+        await channel.sink.close();
+      } catch (_) {}
+      rethrow;
+    }
+  }
+
+  static String _uuidV4NoDash() {
+    final r = List<int>.generate(16, (_) => Random.secure().nextInt(256));
+    r[6] = (r[6] & 0x0F) | 0x40;
+    r[8] = (r[8] & 0x3F) | 0x80;
+    return r.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+  }
+
+  static String _timestamp() {
+    return DateTime.now().toUtc().toIso8601String();
+  }
+
+  static String _escapeXml(String s) {
+    return s
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll("'", '&apos;')
+        .replaceAll('"', '&quot;');
+  }
 }
 
 // ============================================================

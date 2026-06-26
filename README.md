@@ -139,7 +139,7 @@ voice.txt
 API：你的_火山引擎语音_key
 ```
 
-`voice.txt` 用于 v2.0 TTS 声音克隆 + 语音合成（火山引擎豆包）。与 ARK 是火山不同产品线，鉴权方式可能不同，单独配置。
+`voice.txt` 用于声音克隆（火山引擎豆包）。**v2.1 起预设音色改用 Edge TTS 免费路径，无需 voice.txt 也能用"听 ta 说"**。只有"克隆真人声音"才需要 voice.txt。
 
 ### 运行
 
@@ -207,7 +207,7 @@ CHANGELOG.md             # 更新日志
 
 ## 版本
 
-当前版本：**v2.0.0**
+当前版本：**v2.1.0**
 
 详见 [`CHANGELOG.md`](./CHANGELOG.md)。
 

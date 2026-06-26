@@ -298,14 +298,20 @@ class MemoryService {
   // ============ v2.0: 声音配置 ============
 
   /// 读取声音配置。未配置返回 null。
+  /// v2.1: 预设模式 voiceId 可空，靠 voicePreset 判断；克隆模式需 voiceId。
   Future<VoiceConfig?> readVoiceConfig() async {
     final meta = await store.readMeta();
-    final voiceId = meta['voiceId'] as String?;
-    if (voiceId == null || voiceId.isEmpty) return null;
+    final voiceId = (meta['voiceId'] as String?) ?? '';
+    final voicePreset = (meta['voicePreset'] as String?) ?? '';
+    final voiceRecPath = meta['voiceRecPath'] as String?;
+    // 克隆模式需 voiceId；预设模式需 voicePreset；都没则未配置
+    final isClone = voicePreset == 'clone';
+    if (isClone && voiceId.isEmpty) return null;
+    if (!isClone && voicePreset.isEmpty) return null;
     return VoiceConfig(
       voiceId: voiceId,
-      voicePreset: (meta['voicePreset'] as String?) ?? '',
-      voiceRecPath: meta['voiceRecPath'] as String?,
+      voicePreset: voicePreset,
+      voiceRecPath: voiceRecPath,
     );
   }
 

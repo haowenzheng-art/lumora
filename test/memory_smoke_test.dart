@@ -552,19 +552,20 @@ weight: 中
     expect(await service.readVoiceConfig(), null,
         reason: '初始无 voice 配置');
 
-    // 写入预设音色配置
+    // v2.1: 预设音色 voiceId 留空（Edge TTS 用 voicePreset 映射）
     await service.setVoiceConfig(const VoiceConfig(
-      voiceId: 'preset_gentle_female',
+      voiceId: '',
       voicePreset: '温柔女声',
     ));
     final cfg1 = await service.readVoiceConfig();
-    expect(cfg1, isNotNull, reason: '写入后能读到');
-    expect(cfg1!.voiceId, 'preset_gentle_female');
+    expect(cfg1, isNotNull, reason: '预设模式 voiceId 空也能读到');
+    expect(cfg1!.voiceId, '', reason: '预设模式 voiceId 为空');
     expect(cfg1.voicePreset, '温柔女声');
     expect(cfg1.voiceRecPath, null, reason: '预设音色无参考音频路径');
     expect(cfg1.isClone, false, reason: '预设音色 isClone=false');
+    expect(cfg1.isPreset, true, reason: '预设音色 isPreset=true');
 
-    // 写入克隆真人声音配置
+    // 克隆真人声音配置（需 voiceId）
     await service.setVoiceConfig(const VoiceConfig(
       voiceId: 'clone_xxxx',
       voicePreset: 'clone',
@@ -576,6 +577,16 @@ weight: 中
     expect(cfg2.voicePreset, 'clone');
     expect(cfg2.voiceRecPath, '/path/to/ref.wav');
     expect(cfg2.isClone, true, reason: '克隆模式 isClone=true');
+    expect(cfg2.isPreset, false, reason: '克隆模式 isPreset=false');
+
+    // 克隆模式 voiceId 空 → readVoiceConfig 返回 null（未训练完）
+    await service.setVoiceConfig(const VoiceConfig(
+      voiceId: '',
+      voicePreset: 'clone',
+      voiceRecPath: '/path/to/ref.wav',
+    ));
+    expect(await service.readVoiceConfig(), null,
+        reason: '克隆模式 voiceId 空视为未配置');
 
     // 清除配置
     await service.clearVoiceConfig();
@@ -586,12 +597,12 @@ weight: 中
     final store = service.store;
     await store.patchMeta({'lastSeenAt': 12345});
     await service.setVoiceConfig(const VoiceConfig(
-      voiceId: 'vid2',
+      voiceId: '',
       voicePreset: '沉稳男声',
     ));
     final meta = await store.readMeta();
     expect(meta['lastSeenAt'], 12345, reason: 'voice 写入不影响 lastSeenAt');
-    expect(meta['voiceId'], 'vid2');
+    expect(meta['voicePreset'], '沉稳男声');
   });
 }
 

@@ -16,6 +16,42 @@
 
 ---
 
+## [2.1.0] - 2026-06-26
+
+### Added
+
+- **Edge TTS 免费路径**：预设音色改走微软 Edge TTS（WebSocket 协议），无需 API key 立即可用。v2.0 的"听 ta 说"功能从"必须有 voice.txt 才能用"变成"预设音色零门槛，克隆音色才需要火山 key"。
+  - `lib/voice.dart` 新增 `EdgeTtsClient` 类：通过 `wss://speech.platform.bing.com` 的 WebSocket 协议调用，发送 speech.config + ssml 消息，接收二进制音频帧（前 2 字节 type + 2 字节 length + payload）+ `Path:turn.end` 结束信号。输出 `audio-24khz-48kbitrate-mono-mp3` 格式。
+  - 预设音色映射：温柔女声 → `zh-CN-XiaoxiaoNeural`、沉稳男声 → `zh-CN-YunxiNeural`、清亮少年 → `zh-CN-XiaoyiNeural`。
+  - `synthesizeVoice` 改为按 `VoiceConfig` 分流：`isClone` 走火山豆包（`_synthesizeWithVolc`），`isPreset` 走 Edge TTS（`EdgeTtsClient.synthesize`）。
+  - 新增依赖 `web_socket_channel: ^2.4.0`（Dart 官方生态包，WebSocket 客户端）。
+  - UUID v4 自生成（`Random.secure()` + 版本位设置），无 dash 格式符合 Edge TTS 协议要求。
+
+### Changed
+
+- **预设模式 voiceId 留空**：v2.0 预设模式 voiceId 存的是 preset 名，v2.1 改为空字符串（Edge TTS 用 `voicePreset` 映射到 voice name，不需要 voiceId）。
+- `readVoiceConfig` 判断逻辑改：克隆模式需 `voiceId` 非空，预设模式需 `voicePreset` 非空，两者都没则返回 null。
+- `VoiceConfig` 加 `isPreset` getter（`!isClone && voicePreset.isNotEmpty`）。
+- `_MessageBubble._playTts` 调用点改：传 `VoiceConfig` 对象而非 `voiceId` 字符串。
+- Onboarding 第 7 节标注更新：
+  - 预设音色 subtitle: "免费立即可用，基于 Edge TTS，不是 ta 本人的声音"
+  - 克隆真人声音 subtitle: "上传 3-10s 参考音频，需 voice.txt（火山引擎），最能还原 ta"
+
+### Tests
+
+- `[12/12]` voice config 测试更新：预设模式 voiceId 空也能读到 + `isPreset=true` 断言 + 克隆模式 voiceId 空视为未配置（未训练完）的边界 case。
+
+### Notes
+
+- **Edge TTS 协议基于公开文档推断**：Trusted Client Token `6A5AA1D4EAFF4E9FB37E23D68482D6F5` 是微软 Edge 浏览器读屏功能的公开 token（非密钥）。二进制帧解析（`type=0x02` 音频 / length big-endian）和 `Path:turn.end` 结束信号基于开源参考实现。若实际跑通有问题，优先检查 token 末尾字节和帧 type 值。
+- **三层分流定位明确**：
+  - 预设音色（Edge TTS 免费）→ 0 门槛，让 v2.0 的"听 ta 说"立即可用
+  - 克隆真人（火山豆包）→ 最能还原 ta，但需 voice.txt
+  - 未来 v3 评估：本地离线 TTS 引擎（体积大质量差，留待远期）
+- **声音克隆仍是 v2.x 高阶能力**：Edge TTS 让基础声音可用，但"真正听到接近 ta 的声音"仍需火山 key。用户有 key 后无缝升级，代码已分流好。
+
+---
+
 ## [2.0.0] - 2026-06-26
 
 ### Added
@@ -235,7 +271,8 @@
 
 ---
 
-[Unreleased]: https://github.com/haowenzheng-art/lumora/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/haowenzheng-art/lumora/compare/v2.1.0...HEAD
+[2.1.0]: https://github.com/haowenzheng-art/lumora/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/haowenzheng-art/lumora/compare/v1.3.0...v2.0.0
 [1.3.0]: https://github.com/haowenzheng-art/lumora/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/haowenzheng-art/lumora/compare/v1.1.1...v1.2.0

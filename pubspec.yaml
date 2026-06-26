@@ -17,6 +17,7 @@ dependencies:
   media_kit_video: ^1.2.4
   media_kit_libs_windows_video: ^1.0.9
   image: ^4.5.4
+  web_socket_channel: ^2.4.0
 
 dev_dependencies:
   flutter_test:

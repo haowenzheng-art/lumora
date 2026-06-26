@@ -1181,7 +1181,7 @@ class _MemoryOnboardingPageState extends State<MemoryOnboardingPage> {
     collect(_traits, '性格');
     collect(_unfinished, '未完成');
 
-    // v2.0: 构造 voiceConfig
+    // v2.1: 构造 voiceConfig
     VoiceConfig? voiceConfig;
     if (_voiceMode && _cloneAudioPath != null) {
       voiceConfig = VoiceConfig(
@@ -1191,7 +1191,7 @@ class _MemoryOnboardingPageState extends State<MemoryOnboardingPage> {
       );
     } else if (!_voiceMode) {
       voiceConfig = VoiceConfig(
-        voiceId: _selectedPreset,
+        voiceId: '', // Edge TTS 不需要 voiceId，用 voicePreset 映射
         voicePreset: _selectedPreset,
       );
     }
@@ -1658,7 +1658,7 @@ class _MemoryOnboardingPageState extends State<MemoryOnboardingPage> {
             selected: !_voiceMode,
             onTap: () => setState(() => _voiceMode = false),
             title: '用预设音色',
-            subtitle: '快速可用，不是 ta 本人的声音',
+            subtitle: '免费立即可用，基于 Edge TTS，不是 ta 本人的声音',
           ),
           if (!_voiceMode) ...[
             const SizedBox(height: 10),
@@ -1705,7 +1705,7 @@ class _MemoryOnboardingPageState extends State<MemoryOnboardingPage> {
             selected: _voiceMode,
             onTap: () => setState(() => _voiceMode = true),
             title: '克隆真人声音',
-            subtitle: '上传 3-10s 参考音频，最能还原 ta',
+            subtitle: '上传 3-10s 参考音频，需 voice.txt（火山引擎），最能还原 ta',
             highlight: true,
           ),
           if (_voiceMode) ...[
@@ -3633,7 +3633,7 @@ class _MessageBubbleState extends State<_MessageBubble> {
       // 未配置音色
       final memory = MemoryService(spiritId: widget.spiritId);
       final config = await memory.readVoiceConfig();
-      if (config == null || config.voiceId.isEmpty) {
+      if (config == null) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -3645,8 +3645,8 @@ class _MessageBubbleState extends State<_MessageBubble> {
         return;
       }
 
-      // 合成新音频
-      final mp3 = await synthesizeVoice(widget.message.content, config.voiceId);
+      // 合成新音频（v2.1: 按 VoiceConfig 分流，预设走 Edge TTS 免费，克隆走火山）
+      final mp3 = await synthesizeVoice(widget.message.content, config);
       final path = await saveTtsAudio(widget.spiritId, _msgId, mp3);
       await _player.play(path);
       if (mounted) setState(() {});
