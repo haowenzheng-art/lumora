@@ -8,6 +8,7 @@ import 'dart:ui';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show rootBundle;
+import 'package:google_fonts/google_fonts.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -23,6 +24,7 @@ import 'memory/memory_service.dart';
 import 'memory/migrate.dart';
 import 'memory/types.dart';
 import 'voice.dart';
+import 'theme.dart';
 
 void main() {
   MediaKit.ensureInitialized();
@@ -34,18 +36,23 @@ class LumoraApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // v2.2: 全局默认 Inter（西文）+ 中文 fallback；情感位用 theme.dart 的 Noto Serif SC 覆盖
+    final base = ThemeData(
+      useMaterial3: true,
+      brightness: Brightness.dark,
+      scaffoldBackgroundColor: Colors.transparent,
+      colorScheme: const ColorScheme.dark(
+        primary: Color(0xFFE8B576),
+        secondary: Color(0xFF8B9DC3),
+        surface: Color(0xFF0E1424),
+      ),
+    );
     return MaterialApp(
       title: 'Lumora',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        useMaterial3: true,
-        brightness: Brightness.dark,
-        scaffoldBackgroundColor: Colors.transparent,
-        colorScheme: const ColorScheme.dark(
-          primary: Color(0xFFE8B576),
-          secondary: Color(0xFF8B9DC3),
-          surface: Color(0xFF0E1424),
-        ),
+      theme: base.copyWith(
+        textTheme: GoogleFonts.interTextTheme(base.textTheme),
+        primaryTextTheme: GoogleFonts.interTextTheme(base.primaryTextTheme),
       ),
       home: const SplashPage(),
     );
@@ -287,34 +294,18 @@ class _SplashPageState extends State<SplashPage> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          const Text(
+          Text(
             'Lumora',
-            style: TextStyle(
-              fontSize: 42,
-              fontWeight: FontWeight.w200,
-              letterSpacing: 12,
-              color: LumoraColors.textPrimary,
-              height: 1.2,
-            ),
+            style: LumoraTextStyles.displayStyle(),
           ),
           const SizedBox(height: 12),
-          const Text(
+          Text(
             '陪你走过这段。',
-            style: TextStyle(
-              fontSize: 13,
-              color: LumoraColors.moonBlue,
-              letterSpacing: 4,
-              height: 1.8,
-            ),
+            style: LumoraTextStyles.letterStyle(),
           ),
-          const Text(
+          Text(
             '然后，希望你不再需要我。',
-            style: TextStyle(
-              fontSize: 13,
-              color: LumoraColors.moonBlue,
-              letterSpacing: 4,
-              height: 1.8,
-            ),
+            style: LumoraTextStyles.letterStyle(),
           ),
           const SizedBox(height: 72),
           const Text(
