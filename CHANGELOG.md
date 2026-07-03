@@ -11,8 +11,76 @@
 ### 计划中
 
 - 多精灵记忆隔离与跨精灵检索
-- UX 抛光（视觉/动画/空状态）
+- 关闭自动生成跳过 / 关闭破冰仪式（用户偏好开关）
 - TTS 自动合成（可选）/ 声音情感调节 / 离线 TTS 引擎
+
+---
+
+## [2.2.0] - 2026-07-03
+
+### Added · 产品级打磨（v2.2 整段）
+
+v2.1 仍是"工程上能跑"，v2.2 启动**产品级打磨**：把 5 个核心体验节点从 demo 级别拉到位。每一步都建立可扩展的组件库，后续 v2.3+ 可基于这套组件继续做深度。
+
+#### A · 字体系统（v2.2-A）
+
+- **google_fonts 接入**：`pubspec.yaml` 加 `google_fonts ^6.2.1`（实际装 6.3.3）
+- **`LumoraTextStyles` 全局常量**：新建 `lib/theme.dart`，定义 `displayStyle` / `letterStyle` / `bodyStyle` / `captionStyle` / `buttonStyle` 五种文本样式
+  - 情感位（产品 logo / 信札式 UI / 告别语）→ Noto Serif SC（思源宋体），衬线感匹配"思念具象化"庄重调性
+  - 功能位（按钮 / 时间戳 / 提示）→ Inter（西文）+ 中文 fallback
+- **`LumoraApp` 全局集成**：`ThemeData` 套用 `GoogleFonts.interTextTheme`
+- **SplashPage 落地**：Lumora logo + 产品口号"陪你走过这段。然后，希望你不再需要我。"改用 `LumoraTextStyles.displayStyle()` / `letterStyle()`
+
+#### B · 触摸反馈（v2.2-B）
+
+- **`Pressable` 组件**：新建 `lib/widgets/pressable.dart`，封装 `AnimatedScale` 按下 0.96 / 松手 150ms easeOutCubic 回弹
+  - 用 `AnimatedScale` 而非 `InkWell` 水波纹——避免跟背景 60 个浮动粒子视觉冲突，跟 Lumora 暗色夜色调性更搭
+  - `onTap = null` 时完全禁用（disabled 状态无视觉反馈）
+- **5 个关键组件替换**：`_PrimaryButton` / `_RadioChip` / `_WeightChip` / `_TopBar` 返回箭头 / `_CustomButton`（创建流程圆形图标按钮）
+
+#### C · 自定义路由转场（v2.2-C）
+
+- **`FadeScaleRoute` 组件**：新建 `lib/widgets/fade_scale_route.dart`，封装 `PageRouteBuilder`
+  - 进场 250ms easeOutCubic：淡入 + 0.97→1.0 微缩放
+  - 退场 200ms easeInCubic：反向曲线，比入场略快避免"拖"
+  - 不做左右滑动——符合 Lumora"沉静"调性，避免"工具感"
+- **8 处替换**：SplashPage 主流程的 8 处 `MaterialPageRoute(` 全部改为 `FadeScaleRoute(`
+
+#### D · 打字机效果（v2.2-D）
+
+- **`_MessageBubble` 加打字机**：35ms/字逐字出现，附琥珀色 2px 竖线闪烁光标（600ms `AnimatedOpacity`）
+- **跳过按钮**：长消息（200+ 字）可点"跳过 ›"立即显示完整
+- **TTS 按钮时序**：仅在打字完成后显示，避免声音抢字速（与宪法第二条手动触发一致）
+- **`_typewriterIndex` 追踪**：ChatPage 维护当前正在打字的消息索引，5 处 add 助手消息位置（opening / probe / LLM 返回 / LLM 异常 / greeting）都触发打字机
+- **用户消息不参与**：立即显示
+
+#### E · 三态设计（v2.2-E）
+
+- **`EmptyState` 组件**：新建 `lib/widgets/empty_state.dart`，居中长引号 + 引导文案 + 可选操作按钮
+- **`SkeletonBox` 组件**：新建 `lib/widgets/skeleton_box.dart`，手写 shimmer 渐变（`AnimatedBuilder` 1400ms 循环，无新依赖）
+- **SplashPage 空状态**：我的精灵列表为空时显示 EmptyState（"还没有人被你想起" + "记住第一个 ta" 按钮）
+- **`_buildGeneratingView` 升级**：图片/视频生成等待时用 240×240 SkeletonBox 替换裸 `CircularProgressIndicator`
+- **不做 ErrorView**：v2.2 不做错误兜底组件，避免"为未来需求设计"。现有 SnackBar 错误处理够用
+
+#### H · 破冰仪式（v2.2-H）
+
+- **SpiritScenePage 立绘淡入**：800ms `FadeTransition` 从透明到完全显示
+- **自动进入 ChatPage**：淡入完成后 1.5s 自动 `_onSpiritTap()` 进入聊天页（用户主动点击可打断）
+- **首句打字机衔接**：ChatPage 的 `_opening()` 走 v2.2-D 打字机效果，"刚醒过来"的叙事连贯
+- **离别模式优先**：`_farewellMode = true` 时不触发破冰（v1.3 final words 是一次性体验）
+- **未实现强制睁眼**：SpiritView 自带眨眼定时器（2800ms + rand），自然眨眼匹配"刚醒"叙事。v2.3 评估是否加 `forceBlinkOnce` 参数
+
+### Tests
+
+- 现有 12 个 memory_smoke 测试全部通过，未引入新测试（视觉类改动需人判，自动化覆盖不适用）
+- 每个改动都写了 `tool/MANUAL_TEST_v2.2_*.md` 手动测试流程
+
+### Notes
+
+- **v2.2 不是新特性，是把已有特性做"产品级"**：5 个改动覆盖"看字体"（A）/ "摸手感"（B）/ "看切换"（C）/ "看对话"（D）/ "看状态"（E）/ "看破冰"（H），组成完整的"产品级第一印象"
+- **不引入新的第三方依赖**（除 google_fonts 一个）；skimmer 用手写 shimmer 实现
+- **缩进不一致已知问题**：替换 GestureDetector → Pressable 后，部分组件 children 层级没有重新缩进。功能正确，但代码可读性下降。后续 `flutter format` 处理
+- **v2.3 评估方向**：① v3 视觉升级（Live2D/3D 死结未解）② 阶段判定 + 健康留存度量（宪法第二条落地）③ 关闭自动生成跳过 / 关闭破冰（用户偏好开关）
 
 ---
 
