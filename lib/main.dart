@@ -2513,6 +2513,11 @@ class _SpiritScenePageState extends State<SpiritScenePage>
   bool _farewellMode = false;
   String _farewellText = '';
 
+  // v2.2-H 破冰仪式：立绘淡入 + 自动进入 ChatPage
+  late final AnimationController _entrance;
+  bool _userInitiated = false;
+  bool _autoEnterFired = false;
+
   String get _spiritId {
     final p = widget.spritePath;
     final slash = p.lastIndexOf(RegExp(r'[/\\]'));
@@ -2532,6 +2537,22 @@ class _SpiritScenePageState extends State<SpiritScenePage>
       vsync: this,
       duration: const Duration(seconds: 8),
     )..repeat(reverse: true);
+
+    // v2.2-H 破冰仪式：t=0 立绘淡入 800ms → t=800ms 停顿 1.5s → t=2300ms 自动进入 ChatPage
+    _entrance = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 800),
+    )..addStatusListener((status) {
+        if (status == AnimationStatus.completed && !_userInitiated) {
+          // 立绘完全显形后再停 1.5s，自动进入 ChatPage
+          Future.delayed(const Duration(milliseconds: 1500), () {
+            if (!mounted || _userInitiated || _autoEnterFired || _disposed) return;
+            _autoEnterFired = true;
+            _onSpiritTap();
+          });
+        }
+      });
+    _entrance.forward();
 
     _bootVideos();
     _loadParts();
@@ -2684,6 +2705,7 @@ class _SpiritScenePageState extends State<SpiritScenePage>
     _disposed = true;
     _breathe.dispose();
     _halo.dispose();
+    _entrance.dispose();
     super.dispose();
   }
 
@@ -2700,6 +2722,7 @@ class _SpiritScenePageState extends State<SpiritScenePage>
   }
 
   void _onSpiritTap() {
+    _userInitiated = true;
     _pulseToken++;
     _enterChat();
   }
@@ -2752,25 +2775,28 @@ class _SpiritScenePageState extends State<SpiritScenePage>
                             },
                             child: GestureDetector(
                               onTap: _onSpiritTap,
-                              child: _idleVideoPath != null
-                                  ? LoopVideoView(
-                                      idlePath: _idleVideoPath!,
-                                      reactionPath: _reactionVideoPath,
-                                      reactionToken: _reactionToken,
-                                      width: 280,
-                                      height: 360,
-                                      borderRadius: BorderRadius.circular(22),
-                                    )
-                                  : SpiritView(
-                                      spritePath: widget.spritePath,
-                                      manifest: _parts,
-                                      width: 280,
-                                      height: 360,
-                                      borderRadius: BorderRadius.circular(22),
-                                      pointer: _pointer,
-                                      pulseToken: _pulseToken,
-                                      onTap: _onSpiritTap,
-                                    ),
+                              child: FadeTransition(
+                                opacity: _entrance,
+                                child: _idleVideoPath != null
+                                    ? LoopVideoView(
+                                        idlePath: _idleVideoPath!,
+                                        reactionPath: _reactionVideoPath,
+                                        reactionToken: _reactionToken,
+                                        width: 280,
+                                        height: 360,
+                                        borderRadius: BorderRadius.circular(22),
+                                      )
+                                    : SpiritView(
+                                        spritePath: widget.spritePath,
+                                        manifest: _parts,
+                                        width: 280,
+                                        height: 360,
+                                        borderRadius: BorderRadius.circular(22),
+                                        pointer: _pointer,
+                                        pulseToken: _pulseToken,
+                                        onTap: _onSpiritTap,
+                                      ),
+                              ),
                             ),
                           ),
                           const SizedBox(height: 24),
