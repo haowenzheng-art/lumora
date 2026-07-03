@@ -25,6 +25,7 @@ import 'memory/migrate.dart';
 import 'memory/types.dart';
 import 'voice.dart';
 import 'theme.dart';
+import 'widgets/pressable.dart';
 
 void main() {
   MediaKit.ensureInitialized();
@@ -1974,7 +1975,7 @@ class _WeightChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
+    return Pressable(
       onTap: onTap,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
@@ -2015,7 +2016,7 @@ class _TopBar extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 12),
       child: Row(
         children: [
-          GestureDetector(
+          Pressable(
             onTap: onBack,
             child: Container(
               width: 40,
@@ -2081,7 +2082,7 @@ class _RadioChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
+    return Pressable(
       onTap: onTap,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
@@ -2178,7 +2179,7 @@ class _PrimaryButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final enabled = onTap != null;
-    return GestureDetector(
+    return Pressable(
       onTap: onTap,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 36, vertical: 14),
@@ -2293,7 +2294,7 @@ class _CustomButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
+    return Pressable(
       onTap: onTap,
       child: Column(
         children: [
