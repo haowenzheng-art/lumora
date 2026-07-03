@@ -27,6 +27,8 @@ import 'voice.dart';
 import 'theme.dart';
 import 'widgets/pressable.dart';
 import 'widgets/fade_scale_route.dart';
+import 'widgets/empty_state.dart';
+import 'widgets/skeleton_box.dart';
 
 void main() {
   MediaKit.ensureInitialized();
@@ -370,6 +372,15 @@ class _SplashPageState extends State<SplashPage> {
               ),
             ),
             const SizedBox(height: 32),
+          ] else ...[
+            const SizedBox(height: 24),
+            EmptyState(
+              message: '还没有人被你想起',
+              hint: '定制一只属于你的精灵，让 ta 陪你走过一段。',
+              actionLabel: '记住第一个 ta',
+              onAction: _openTextCustom,
+            ),
+            const SizedBox(height: 24),
           ],
           const Text(
             '或者，定制一只',
@@ -2222,13 +2233,10 @@ Widget _buildGeneratingView(String status) {
     child: Column(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        const SizedBox(
-          width: 80,
-          height: 80,
-          child: CircularProgressIndicator(
-            color: LumoraColors.amber,
-            strokeWidth: 2,
-          ),
+        const SkeletonBox(
+          width: 240,
+          height: 240,
+          borderRadius: 18,
         ),
         const SizedBox(height: 32),
         Text(
