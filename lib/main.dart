@@ -26,6 +26,7 @@ import 'memory/types.dart';
 import 'voice.dart';
 import 'theme.dart';
 import 'widgets/pressable.dart';
+import 'widgets/fade_scale_route.dart';
 
 void main() {
   MediaKit.ensureInitialized();
@@ -118,7 +119,7 @@ class _SplashPageState extends State<SplashPage> {
   Future<void> _openTextCustom() async {
     final result = await Navigator.push<_CustomResult>(
       context,
-      MaterialPageRoute(builder: (_) => const TextCustomPage()),
+      FadeScaleRoute(builder: (_) => const TextCustomPage()),
     );
     if (result != null) _afterSpirit(result, isCustom: true);
   }
@@ -126,7 +127,7 @@ class _SplashPageState extends State<SplashPage> {
   Future<void> _openPhotoCustom() async {
     final result = await Navigator.push<_CustomResult>(
       context,
-      MaterialPageRoute(builder: (_) => const PhotoCustomPage()),
+      FadeScaleRoute(builder: (_) => const PhotoCustomPage()),
     );
     if (result != null) _afterSpirit(result, isCustom: true);
   }
@@ -135,7 +136,7 @@ class _SplashPageState extends State<SplashPage> {
     if (!mounted) return;
     await Navigator.push(
       context,
-      MaterialPageRoute(
+      FadeScaleRoute(
         builder: (_) => SpiritScenePage(
           spritePath: spritePath,
           spiritName: name,
@@ -157,14 +158,14 @@ class _SplashPageState extends State<SplashPage> {
     if (!mounted) return;
     final name = await Navigator.push<String>(
       context,
-      MaterialPageRoute(builder: (_) => NamePage(spritePath: spritePath)),
+      FadeScaleRoute(builder: (_) => NamePage(spritePath: spritePath)),
     );
     if (name == null || !mounted) return;
 
     final spiritId = _spiritIdFromPath(spritePath);
     final setup = await Navigator.push<MemorySetupResult>(
       context,
-      MaterialPageRoute(
+      FadeScaleRoute(
         builder: (_) => MemoryOnboardingPage(
           spiritId: spiritId,
           spiritName: name,
@@ -221,7 +222,7 @@ class _SplashPageState extends State<SplashPage> {
     if (!mounted) return;
     await Navigator.push(
       context,
-      MaterialPageRoute(
+      FadeScaleRoute(
         builder: (_) => SpiritScenePage(
           spritePath: spritePath,
           spiritName: name,
@@ -236,7 +237,7 @@ class _SplashPageState extends State<SplashPage> {
   Future<void> _enterExisting(SpriteRecord r) async {
     await Navigator.push(
       context,
-      MaterialPageRoute(
+      FadeScaleRoute(
         builder: (_) => SpiritScenePage(
           spritePath: r.path,
           spiritName: r.name,
@@ -2681,7 +2682,7 @@ class _SpiritScenePageState extends State<SpiritScenePage>
   void _enterChat() {
     Navigator.pushReplacement(
       context,
-      MaterialPageRoute(
+      FadeScaleRoute(
         builder: (_) => ChatPage(
           spirit: widget.spritePath,
           spiritName: widget.spiritName,
@@ -3277,7 +3278,7 @@ class _ChatPageState extends State<ChatPage> with TickerProviderStateMixin {
     if (!mounted) return;
     final result = await Navigator.push<MemorySetupResult>(
       context,
-      MaterialPageRoute(
+      FadeScaleRoute(
         builder: (_) => MemoryOnboardingPage(
           spiritId: _spiritId,
           spiritName: widget.spiritName,
