@@ -2956,6 +2956,9 @@ class _ChatPageState extends State<ChatPage> with TickerProviderStateMixin {
   late final MemoryService _mem;
   bool _memReady = false;
 
+  // v2.2-D: 打字机追踪（-1 = 无打字中）
+  int _typewriterIndex = -1;
+
   // v1.2: 回忆模式（一次性，"我们聊聊…"按钮触发，本轮后归零）
   bool _recallMode = false;
 
@@ -3088,6 +3091,7 @@ class _ChatPageState extends State<ChatPage> with TickerProviderStateMixin {
         '今天，你想说什么？';
     setState(() {
       _messages.add(_Message(role: 'assistant', content: opening));
+      _typewriterIndex = _messages.length - 1;
     });
     _history.add({'role': 'assistant', 'content': opening});
     _persist('assistant', opening);
@@ -3142,6 +3146,7 @@ class _ChatPageState extends State<ChatPage> with TickerProviderStateMixin {
       setState(() {
         _messages.add(_Message(role: 'user', content: text));
         _messages.add(_Message(role: 'assistant', content: probe));
+        _typewriterIndex = _messages.length - 1;
       });
       _history.add({'role': 'user', 'content': text});
       _history.add({'role': 'assistant', 'content': probe});
@@ -3193,6 +3198,7 @@ class _ChatPageState extends State<ChatPage> with TickerProviderStateMixin {
       }
       setState(() {
         _messages.add(_Message(role: 'assistant', content: content));
+        _typewriterIndex = _messages.length - 1;
         _loading = false;
       });
       _history.add({'role': 'assistant', 'content': content});
@@ -3206,6 +3212,7 @@ class _ChatPageState extends State<ChatPage> with TickerProviderStateMixin {
           role: 'assistant',
           content: '我现在有点恍惚，再说一遍好吗？',
         ));
+        _typewriterIndex = _messages.length - 1;
         _loading = false;
       });
       _history.removeLast();
@@ -3232,6 +3239,7 @@ class _ChatPageState extends State<ChatPage> with TickerProviderStateMixin {
     _greetingIdx++;
     setState(() {
       _messages.add(_Message(role: 'assistant', content: greeting));
+      _typewriterIndex = _messages.length - 1;
       _pulseToken++;
     });
     _history.add({'role': 'assistant', 'content': greeting});
@@ -3260,10 +3268,19 @@ class _ChatPageState extends State<ChatPage> with TickerProviderStateMixin {
                       if (i == _messages.length) {
                         return const _TypingBubble();
                       }
+                      final isLast = i == _messages.length - 1;
+                      final shouldAnimate =
+                          isLast && i == _typewriterIndex;
                       return _MessageBubble(
                         message: _messages[i],
                         spiritName: widget.spiritName,
                         spiritId: _spiritId,
+                        typewriter: shouldAnimate,
+                        onTypewriterComplete: () {
+                          if (mounted && _typewriterIndex == i) {
+                            setState(() => _typewriterIndex = -1);
+                          }
+                        },
                       );
                     },
                   ),
@@ -3574,20 +3591,31 @@ class _MessageBubble extends StatefulWidget {
   final _Message message;
   final String spiritName;
   final String spiritId;
+  final bool typewriter;
+  final VoidCallback? onTypewriterComplete;
   const _MessageBubble({
     required this.message,
     required this.spiritName,
     required this.spiritId,
+    this.typewriter = false,
+    this.onTypewriterComplete,
   });
 
   @override
   State<_MessageBubble> createState() => _MessageBubbleState();
 }
 
-class _MessageBubbleState extends State<_MessageBubble> {
+class _MessageBubbleState extends State<_MessageBubble>
+    with SingleTickerProviderStateMixin {
   final VoicePlayer _player = VoicePlayer();
   bool _loading = false;
   bool _firstPlayToastShown = false;
+
+  // v2.2-D 打字机
+  Timer? _typewriterTimer;
+  int _displayedChars = 0;
+  bool _typewriterDone = false;
+  late final AnimationController _cursorCtrl;
 
   @override
   void initState() {
@@ -3595,10 +3623,74 @@ class _MessageBubbleState extends State<_MessageBubble> {
     _player.onComplete = () {
       if (mounted) setState(() {});
     };
+    _cursorCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 600),
+    )..repeat(reverse: true);
+
+    if (widget.typewriter && widget.message.role != 'user') {
+      _startTypewriter();
+    } else {
+      _typewriterDone = true;
+      _displayedChars = widget.message.content.length;
+    }
+  }
+
+  void _startTypewriter() {
+    final content = widget.message.content;
+    if (content.isEmpty) {
+      _finishTypewriter();
+      return;
+    }
+    _displayedChars = 0;
+    _typewriterTimer = Timer.periodic(const Duration(milliseconds: 35), (t) {
+      if (!mounted) {
+        t.cancel();
+        return;
+      }
+      if (!mounted) return;
+      setState(() {
+        _displayedChars++;
+        if (_displayedChars >= content.length) {
+          _finishTypewriter();
+        }
+      });
+    });
+  }
+
+  void _finishTypewriter() {
+    _typewriterTimer?.cancel();
+    _typewriterTimer = null;
+    if (mounted) {
+      setState(() => _typewriterDone = true);
+    }
+    widget.onTypewriterComplete?.call();
+  }
+
+  void _skipTypewriter() {
+    if (!mounted) return;
+    setState(() {
+      _displayedChars = widget.message.content.length;
+    });
+    _finishTypewriter();
+  }
+
+  String get _displayedContent {
+    final content = widget.message.content;
+    if (_typewriterDone || _displayedChars >= content.length) {
+      return content;
+    }
+    return content.substring(0, _displayedChars);
+  }
+
+  bool get _showCursor {
+    return !_typewriterDone && widget.message.role != 'user';
   }
 
   @override
   void dispose() {
+    _typewriterTimer?.cancel();
+    _cursorCtrl.dispose();
     _player.dispose();
     super.dispose();
   }
@@ -3708,17 +3800,64 @@ class _MessageBubbleState extends State<_MessageBubble> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        widget.message.content,
-                        style: const TextStyle(
-                          color: LumoraColors.textPrimary,
-                          fontSize: 14,
-                          height: 1.6,
-                          letterSpacing: 0.2,
-                        ),
+                      // v2.2-D 打字机：精灵消息逐字出现 + 闪烁光标
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Flexible(
+                            child: Text(
+                              _displayedContent,
+                              style: const TextStyle(
+                                color: LumoraColors.textPrimary,
+                                fontSize: 14,
+                                height: 1.6,
+                                letterSpacing: 0.2,
+                              ),
+                            ),
+                          ),
+                          if (_showCursor) ...[
+                            const SizedBox(width: 1),
+                            FadeTransition(
+                              opacity: _cursorCtrl,
+                              child: Container(
+                                width: 2,
+                                height: 16,
+                                margin: const EdgeInsets.only(bottom: 2),
+                                color: LumoraColors.amber,
+                              ),
+                            ),
+                          ],
+                        ],
                       ),
-                      // v2.0: 精灵消息下方"听 ta 说"按钮
-                      if (!isUser) ...[
+                      // v2.2-D 跳过按钮：长消息时跳过打字机立即显示完整
+                      if (_showCursor) ...[
+                        const SizedBox(height: 6),
+                        GestureDetector(
+                          onTap: _skipTypewriter,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 3),
+                            decoration: BoxDecoration(
+                              color: LumoraColors.glass,
+                              borderRadius: BorderRadius.circular(6),
+                              border: Border.all(
+                                color: LumoraColors.glassBorder,
+                                width: 0.5,
+                              ),
+                            ),
+                            child: const Text(
+                              '跳过 ›',
+                              style: TextStyle(
+                                color: LumoraColors.textMuted,
+                                fontSize: 9,
+                                letterSpacing: 1,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                      // v2.0: 精灵消息下方"听 ta 说"按钮（仅在打字完成后显示）
+                      if (!isUser && _typewriterDone) ...[
                         const SizedBox(height: 8),
                         GestureDetector(
                           onTap: _loading ? null : _playTts,
