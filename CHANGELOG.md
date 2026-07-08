@@ -10,9 +10,23 @@
 
 ### 计划中
 
-- 多精灵记忆隔离与跨精灵检索
-- 关闭自动生成跳过 / 关闭破冰仪式（用户偏好开关）
+- 阶段判定 + 健康留存度量（宪法第二条落地，最核心）
 - TTS 自动合成（可选）/ 声音情感调节 / 离线 TTS 引擎
+
+### Added
+
+- **v2.3-B 用户偏好开关**：4 个开关对应宪法语境下用户可能想关掉的"产品感"细节。每个开关默认关（=v2.2 行为，老用户零感知），开后才生效。
+  - **破冰淡入**：`disableEntranceAnim` —— 立绘从透明渐变显形的过程（开 → 立绘瞬间显形）
+  - **自动进入对话**：`disableAutoEnterChat` —— 立绘显形后自动跳到对话页（开 → 必须手动点击精灵）
+  - **打字机效果**：`disableTypewriter` —— 精灵消息逐字出现并闪烁光标（开 → 消息一次性显示）
+  - **骨架屏**：`disableSkeleton` —— 生成等待时的流光占位（开 → 退化为空 SizedBox）
+  - 架构：新建 `lib/preferences.dart`（PreferencesService 单例 + 4 个 ValueNotifier + SharedPreferences 持久化）、`lib/settings_page.dart`（4 个 SwitchListTile 卡片 + 暗色调性）。SplashPage 右上角齿轮 `Icons.tune_rounded` 进入。重启 App 后状态保留。
+- **v2.3 启动补丁 SpiritView 强制眨眼**（修 v2.2-H 已知问题）：SpiritView 新增 `forceBlinkToken` 参数。SpiritScenePage 在立绘完全显形那一瞬（破冰淡入完成 = t=800ms）`_blinkToken++`，SpiritView 检测到 token 变大立即眨一次眼，并重置下一次自然眨眼的计时。彻底解决"刚醒过来"靠自然眨眼碰巧命中的不稳定。
+
+### Notes
+
+- 跨精灵记忆隔离已确认无需修复：`MemoryStore(spiritId)` 把每个 spirit 锁在 `<root>/Lumora/agents/<spiritId>/` 独立目录里，retriever 拿到的 `store.readAllEvents()` 只会读到当前 spirit 的事件。MemoryEvent 字段里没有 spiritId——目录路径本身就是边界。
+- **v2.2-H 已知问题已修复**：v2.2-summary 列的"未实现 SpiritView 强制睁眼"现已实现（见上）。
 
 ---
 
