@@ -10,7 +10,6 @@
 
 ### 计划中
 
-- v2.3-C-2 健康留存度量（北极星指标 = 已走出低谷却仍主动使用的用户占比）
 - v2.3-C-3 阶段状态温和呈现（SettingsPage 只读卡片）
 - v2.3-D TTS 进化（自动 TTS / 情感调节 / 离线引擎；宪法风险高于收益，推迟到 v2.4）
 
@@ -27,6 +26,18 @@
   - **C-1b · 新建 `StageClassifier`**：从最近 12 条对话（6 轮 user+assistant）用 LLM 推断当前会话阶段。节流：每 6 轮 user 消息触发一次（避免每轮调 LLM）。失败静默吞掉 + 推进游标（不卡在同一处反复触发）。写入 `meta.currentStage` / `currentStageConfidence` / `currentStageAt` / `lastStageClassifyMsgCount` 四个字段。提供 `readLast()` 对外读当前阶段。
   - **C-1c · extractor 自动写 event.stage**：`runOnce` 抽取事件后从 `meta.currentStage` 读会话阶段，作为快照写到每条 event 的 stage 字段。不让 LLM 在 prompt 里吐 stage（避免 token 浪费 + prompt 复杂化），复用 stage_classifier 已经维护的 meta。
   - **C-1d · MemoryService 集成**：MemoryService 新增 `stageClassifier` 字段，`maybeRunBackgroundTasks` 加入 stage_classifier 触发（在 extractor 之后跑，保证这次抽取的 events 拿到最新 stage）。新增 `currentStage()` 公开门面方法供 C-2 / C-3 消费。
+- **v2.3-C-2 健康留存度量（北极星指标）**：
+  - **核心定义**：`healthy = (stage ∈ {transitioning, recovered}) && (confidence ≥ 0.6) && (距上次访问 ≤ 14 天)`。这 3 个条件同时满足 → 用户"已走出低谷却仍主动使用" → 北极星指标的布尔投影。
+  - **架构**：新建 `lib/memory/health_retention.dart`，`HealthRetentionComputer` 类 + `HealthRetentionState` 数据类。**纯本地计算，不调 LLM**——消费 C-1b 已经写好的 `meta.currentStage` / `currentStageConfidence` + `meta.lastSeenAt`，算出布尔 + 元数据写到 meta。
+  - **Meta 字段（5 个）**：
+    - `healthyRetention: bool?` — 是否健康留存（北极星）
+    - `healthyRetentionAt: int?` — 计算时间（unix ms）
+    - `healthyRetentionDaysSinceVisit: int?` — 距上次访问天数
+    - `healthyRetentionStage: String?` — 计算时的 stage snapshot（debug / 透明性用）
+    - `healthyRetentionConfidence: num?` — 计算时的 confidence snapshot
+  - **触发策略**：在 `maybeRunBackgroundTasks` 中跟 stageClassifier 同节流跑（每 6 轮 user 消息一次）。无 stage 数据时 compute() 返回 null，不强行用历史数据算（避免误判）。
+  - **纪律延续**：失败静默吞掉 / 不在 UI 暴露为打分 / 复用 C-1 stage 推断不重复调 LLM（成本 0）。
+  - **MemoryService 集成**：新增 `healthRetention` 字段、`currentRetention()` 公开门面供 C-3 消费。`maybeRunBackgroundTasks` 在 stageClassifier 之后跑 `healthRetention.compute()`。
 - **v2.3 启动补丁 SpiritView 强制眨眼**（修 v2.2-H 已知问题）：SpiritView 新增 `forceBlinkToken` 参数。SpiritScenePage 在立绘完全显形那一瞬（破冰淡入完成 = t=800ms）`_blinkToken++`，SpiritView 检测到 token 变大立即眨一次眼，并重置下一次自然眨眼的计时。彻底解决"刚醒过来"靠自然眨眼碰巧命中的不稳定。
 
 ### Tests

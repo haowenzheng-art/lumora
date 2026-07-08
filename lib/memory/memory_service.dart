@@ -4,6 +4,7 @@ import 'dart:io';
 import '../voice.dart';
 import 'decay.dart';
 import 'extractor.dart';
+import 'health_retention.dart';
 import 'retriever.dart';
 import 'stage_classifier.dart';
 import 'store.dart';
@@ -28,6 +29,10 @@ class MemoryService {
 
   /// v2.3-C：会话级阶段推断器（从最近 N 条对话推断用户当前阶段）
   final StageClassifier stageClassifier;
+
+  /// v2.3-C-2：健康留存度量（北极星指标：已走出低谷却仍主动使用的用户）
+  /// 纯本地计算，消费 [stageClassifier] 写好的 meta，不调 LLM。
+  final HealthRetentionComputer healthRetention;
 
   bool _busy = false;
 
@@ -55,6 +60,9 @@ class MemoryService {
           hardLimit: activeHardLimit,
         ),
         stageClassifier = StageClassifier(
+          store: MemoryStore(spiritId, baseDirOverride: baseDirOverride),
+        ),
+        healthRetention = HealthRetentionComputer(
           store: MemoryStore(spiritId, baseDirOverride: baseDirOverride),
         );
 
@@ -103,6 +111,12 @@ class MemoryService {
         if (await stageClassifier.shouldRunNow()) {
           await stageClassifier.runOnce();
         }
+        // v2.3-C-2：健康留存度量——消费 stageClassifier 已经写好的 meta，纯本地计算
+        // 必须在 stageClassifier 之后跑，否则读不到 currentStage。
+        // 没有 stage 数据时 compute() 返回 null，等下次 stageClassifier 跑过再算。
+        if (await stageClassifier.shouldRunNow()) {
+          await healthRetention.compute();
+        }
         await decay.runOnce();
       } catch (_) {
         // 静默吞掉，不能影响聊天主路径
@@ -115,6 +129,12 @@ class MemoryService {
   /// v2.3-C：读当前会话阶段（null = 未触发推断或推断失败）
   /// C-2 健康留存度量 + C-3 UI 接入都消费这个。
   Future<StageClassification?> currentStage() => stageClassifier.readLast();
+
+  /// v2.3-C-2：读当前健康留存状态（北极星指标）
+  /// null = 还没跑过 compute()（stageClassifier 都没跑过）。
+  /// C-3 UI 接入消费这个。
+  Future<HealthRetentionState?> currentRetention() =>
+      healthRetention.readLast();
 
   /// 读取 L1 profile
   Future<String> readProfile() => store.readProfile();
