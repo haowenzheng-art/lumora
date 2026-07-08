@@ -26,6 +26,13 @@ class SpiritView extends StatefulWidget {
   final BorderRadius borderRadius;
   final Offset? pointer; // 归一化 [-1,1]
   final int pulseToken;
+
+  /// v2.3 强制眨眼触发器：父组件在想要 SpiritView 立即眨一次眼时
+  /// 把这个值 +1（自增 token 风格，跟 pulseToken 一致）。
+  /// SpiritView 会在 didUpdateWidget 检测到变大时立即 _playBlink() 一次，
+  /// 并重置下一次自然眨眼的计时——这正是"刚醒过来"破冰仪式需要的瞬间。
+  final int forceBlinkToken;
+
   final VoidCallback? onTap;
 
   const SpiritView({
@@ -37,6 +44,7 @@ class SpiritView extends StatefulWidget {
     this.borderRadius = const BorderRadius.all(Radius.circular(20)),
     this.pointer,
     this.pulseToken = 0,
+    this.forceBlinkToken = 0,
     this.onTap,
   });
 
@@ -88,6 +96,15 @@ class _SpiritViewState extends State<SpiritView>
     super.didUpdateWidget(old);
     if (widget.pulseToken != old.pulseToken && widget.pulseToken > 0) {
       _pulse.forward(from: 0);
+    }
+    // v2.3 强制眨眼：父组件（通常是 SpiritScenePage 破冰仪式）传一个
+    // 更大的 forceBlinkToken 进来 → 立即眨一次，并把下一次自然眨眼
+    // 计时器从"现在"重新算起，避免紧接着又眨一次显得仓促。
+    if (widget.forceBlinkToken != old.forceBlinkToken &&
+        widget.forceBlinkToken > old.forceBlinkToken &&
+        widget.manifest != null) {
+      _playBlink();
+      _scheduleNextBlink();
     }
     final hadPointer = old.pointer != null;
     final hasPointer = widget.pointer != null;
