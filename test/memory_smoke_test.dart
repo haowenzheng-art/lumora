@@ -24,6 +24,7 @@ import 'package:lumora/memory/decay.dart';
 import 'package:lumora/memory/memory_service.dart';
 import 'package:lumora/memory/migrate.dart';
 import 'package:lumora/memory/retriever.dart';
+import 'package:lumora/memory/stage_classifier.dart';
 import 'package:lumora/memory/store.dart';
 import 'package:lumora/memory/types.dart';
 import 'package:lumora/prompt.dart';
@@ -686,6 +687,65 @@ weight: 中
     final renderedNull = base.renderForPrompt();
     expect(renderedNull.contains('[阶段:'), isFalse,
         reason: 'stage=null 时 renderForPrompt 不应附加阶段标签');
+  });
+
+  // v2.3-C 会话级阶段推断器（[14/14]）—— 验证 StageClassifier 节流 + meta 写入 + 容错
+  test('[14/14] StageClassifier 节流 + meta 写入 + 容错（v2.3-C-1b）', () async {
+    final store = MemoryStore('test_spirit_stage', baseDirOverride: tmp);
+    final clf = StageClassifier(store: store);
+
+    // 1) 初始无消息，shouldRunNow 应该 false（不触发）
+    expect(await clf.shouldRunNow(), isFalse, reason: '无消息不应触发');
+
+    // 2) 写 < 4 条消息，runOnce 应该返回 null（消息不够）
+    for (int i = 0; i < 3; i++) {
+      await store.appendMessage(RawMessage(role: 'user', content: 'msg $i', ts: i));
+    }
+    final r0 = await clf.runOnce();
+    expect(r0, isNull, reason: '消息 < 4 条应直接返回 null，不调 LLM');
+
+    // 3) readLast 在无 meta 时返回 null
+    final last0 = await clf.readLast();
+    expect(last0, isNull, reason: '无 meta 应返回 null');
+
+    // 4) 直接模拟 meta 写入（绕过 LLM），验证 readLast 能解析
+    await store.patchMeta({
+      'currentStage': 'transitioning',
+      'currentStageConfidence': 0.75,
+      'currentStageAt': 1700000000000,
+    });
+    final last1 = await clf.readLast();
+    expect(last1, isNotNull);
+    expect(last1!.stage, GriefStage.transitioning);
+    expect(last1.confidence, closeTo(0.75, 0.001));
+
+    // 5) 写入未知 stage 字符串，readLast 应容错返回 null（不崩）
+    await store.patchMeta({
+      'currentStage': 'future_unknown_stage',
+      'currentStageConfidence': 0.5,
+      'currentStageAt': 1700000000000,
+    });
+    final last2 = await clf.readLast();
+    expect(last2, isNull, reason: '未知 stage 应返回 null，不抛错');
+
+    // 6) 补足消息后 shouldRunNow 应当按节流窗口触发
+    // classifyEveryNTurns 默认 6，每轮 user+assistant 各一条 = 12 条
+    for (int i = 0; i < 14; i++) {
+      await store.appendMessage(RawMessage(
+        role: i.isEven ? 'user' : 'assistant',
+        content: 'msg $i',
+        ts: i + 100,
+      ));
+    }
+    expect(await clf.shouldRunNow(), isTrue, reason: '消息数领先 lastExtractMsgCount >= 12 应触发');
+
+    // 7) runOnce 失败时（无 LLM）应静默返回 null + 推进游标（避免反复触发）
+    final r1 = await clf.runOnce();
+    expect(r1, isNull, reason: '无 LLM 接入时应静默返回 null');
+    // lastStageClassifyMsgCount 应该被推进
+    final meta = await store.readMeta();
+    expect(meta['lastStageClassifyMsgCount'], isNotNull,
+        reason: '失败时也应推进游标，避免反复触发');
   });
 }
 
