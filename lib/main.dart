@@ -29,9 +29,15 @@ import 'widgets/pressable.dart';
 import 'widgets/fade_scale_route.dart';
 import 'widgets/empty_state.dart';
 import 'widgets/skeleton_box.dart';
+import 'preferences.dart';
+import 'settings_page.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
   MediaKit.ensureInitialized();
+  // v2.3-B: 用户偏好（4 个开关）从 SharedPreferences 预加载，
+  // 必须在 runApp 之前完成，否则 SplashPage 第一次 build 读不到 prefs
+  await PreferencesService.I.load();
   runApp(const LumoraApp());
 }
 
@@ -288,6 +294,38 @@ class _SplashPageState extends State<SplashPage> {
           const _BackgroundGradient(),
           ..._buildParticles(60),
           SafeArea(child: Center(child: _buildMainView())),
+          // v2.3-B: 右上角齿轮 → 偏好设置
+          Positioned(
+            top: 12,
+            right: 12,
+            child: SafeArea(
+              child: Pressable(
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    FadeScaleRoute(builder: (_) => const SettingsPage()),
+                  );
+                },
+                child: Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: LumoraColors.glass,
+                    border: Border.all(
+                      color: LumoraColors.glassBorder,
+                      width: 0.5,
+                    ),
+                  ),
+                  child: const Icon(
+                    Icons.tune_rounded,
+                    color: LumoraColors.textPrimary,
+                    size: 18,
+                  ),
+                ),
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -2506,6 +2544,10 @@ class _SpiritScenePageState extends State<SpiritScenePage>
   int _pulseToken = 0;
   int _reactionToken = 0;
 
+  // v2.3: 强制眨眼触发器（破冰仪式用——立绘完全显形那一瞬 +1，
+  // SpiritView 收到更大 token 后立即眨一次眼）
+  int _blinkToken = 0;
+
   // 图层合成（视频未就绪时的 fallback）
   PartsManifest? _parts;
 
@@ -2539,17 +2581,26 @@ class _SpiritScenePageState extends State<SpiritScenePage>
     )..repeat(reverse: true);
 
     // v2.2-H 破冰仪式：t=0 立绘淡入 800ms → t=800ms 停顿 1.5s → t=2300ms 自动进入 ChatPage
+    // v2.3 补丁：t=800ms 立绘完全显形那一瞬强制眨眼一次（"刚醒过来"），不依赖自然眨眼碰巧命中
+    // v2.3-B：disableEntranceAnim=true 时 duration=zero，forward 同步完成 → 立绘立即显形 + 强制眨眼，
+    //          避免"用户关了淡入但仍要等 800ms"的尴尬
     _entrance = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 800),
+      duration: PreferencesService.I.disableEntranceAnim.value
+          ? Duration.zero
+          : const Duration(milliseconds: 800),
     )..addStatusListener((status) {
-        if (status == AnimationStatus.completed && !_userInitiated) {
-          // 立绘完全显形后再停 1.5s，自动进入 ChatPage
-          Future.delayed(const Duration(milliseconds: 1500), () {
-            if (!mounted || _userInitiated || _autoEnterFired || _disposed) return;
-            _autoEnterFired = true;
-            _onSpiritTap();
-          });
+        if (status == AnimationStatus.completed) {
+          // 立绘完全显形 → 强制眨眼一次，"刚醒过来"的视觉钩子
+          setState(() => _blinkToken++);
+          if (!_userInitiated && !PreferencesService.I.disableAutoEnterChat.value) {
+            // 立绘完全显形后再停 1.5s，自动进入 ChatPage
+            Future.delayed(const Duration(milliseconds: 1500), () {
+              if (!mounted || _userInitiated || _autoEnterFired || _disposed) return;
+              _autoEnterFired = true;
+              _onSpiritTap();
+            });
+          }
         }
       });
     _entrance.forward();
@@ -2794,6 +2845,7 @@ class _SpiritScenePageState extends State<SpiritScenePage>
                                         borderRadius: BorderRadius.circular(22),
                                         pointer: _pointer,
                                         pulseToken: _pulseToken,
+                                        forceBlinkToken: _blinkToken,
                                         onTap: _onSpiritTap,
                                       ),
                               ),
@@ -3295,8 +3347,9 @@ class _ChatPageState extends State<ChatPage> with TickerProviderStateMixin {
                         return const _TypingBubble();
                       }
                       final isLast = i == _messages.length - 1;
-                      final shouldAnimate =
-                          isLast && i == _typewriterIndex;
+                      final shouldAnimate = isLast &&
+                          i == _typewriterIndex &&
+                          !PreferencesService.I.disableTypewriter.value;
                       return _MessageBubble(
                         message: _messages[i],
                         spiritName: widget.spiritName,
