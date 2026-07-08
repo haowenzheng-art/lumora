@@ -60,7 +60,19 @@ class MemoryExtractor {
 
       // 写事件
       if (result.events.isNotEmpty) {
-        await store.appendEvents(result.events);
+        // v2.3-C：从 meta.currentStage 读会话阶段，写到每条 event.stage
+        // 这是'当时会话阶段'的快照——历史是历史，不会被改写
+        final meta = await store.readMeta();
+        final currentStageStr = meta['currentStage'] as String?;
+        final stageSnapshot = _parseStageForExtractor(currentStageStr);
+        if (stageSnapshot != null) {
+          final tagged = result.events
+              .map((e) => e.copyWith(stage: stageSnapshot))
+              .toList();
+          await store.appendEvents(tagged);
+        } else {
+          await store.appendEvents(result.events);
+        }
       }
 
       // 写 profile patch（追加为一段）
@@ -78,6 +90,15 @@ class MemoryExtractor {
     } catch (_) {
       return null;
     }
+  }
+
+  /// v2.3-C：从 meta 字符串解析 stage（容错未知返回 null）
+  GriefStage? _parseStageForExtractor(String? s) {
+    if (s == null || s.isEmpty) return null;
+    for (final st in GriefStage.values) {
+      if (s == st.name) return st;
+    }
+    return null;
   }
 
   /// 简单合并：旧 profile + 空行 + patch。超过 hard 上限按段落从头裁剪。
