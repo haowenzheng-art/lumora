@@ -99,6 +99,7 @@ class StageClassifier {
       final who = m.role == 'user' ? '用户' : '我';
       return '$who: ${m.content}';
     }).join('\n');
+    final at = DateTime.now().millisecondsSinceEpoch;
 
     final system = '''
 你是一个负责"会话阶段推断"的辅助系统。你不是聊天对象，不要扮演任何角色，只输出纯 JSON。
@@ -141,13 +142,13 @@ class StageClassifier {
         temperature: 0.2,
         maxTokens: maxTokens,
       );
-      return _parseLlmJson(resp.content);
+      return _parseLlmJson(resp.content, at);
     } catch (_) {
       return null;
     }
   }
 
-  StageClassification? _parseLlmJson(String raw) {
+  StageClassification? _parseLlmJson(String raw, int at) {
     try {
       var s = raw.trim();
       if (s.startsWith('```')) {
@@ -172,11 +173,22 @@ class StageClassifier {
       return StageClassification(
         stage: stage,
         confidence: clamped,
+        at: at,
         reason: reason.isEmpty ? null : reason,
       );
     } catch (_) {
       return null;
     }
+  }
+
+  /// 顶层私有 _parseStage（types.dart 那个）的实例版本。
+  /// Dart library-private 不允许跨文件调用顶层函数，所以这里复制一份。
+  GriefStage? _parseStage(String? s) {
+    if (s == null) return null;
+    for (final st in GriefStage.values) {
+      if (st.name == s) return st;
+    }
+    return null;
   }
 }
 
