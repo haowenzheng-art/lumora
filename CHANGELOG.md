@@ -10,8 +10,39 @@
 
 ### 计划中
 
-- 阶段判定 + 健康留存度量（宪法第二条落地，最核心）
-- TTS 自动合成（可选）/ 声音情感调节 / 离线 TTS 引擎
+- v2.3-C-2 健康留存度量（北极星指标 = 已走出低谷却仍主动使用的用户占比）
+- v2.3-C-3 阶段状态温和呈现（SettingsPage 只读卡片）
+- v2.3-D TTS 进化（自动 TTS / 情感调节 / 离线引擎；宪法风险高于收益，推迟到 v2.4）
+
+### Added
+
+- **v2.3-B 用户偏好开关**：4 个开关对应宪法语境下用户可能想关掉的"产品感"细节。每个开关默认关（=v2.2 行为，老用户零感知），开后才生效。
+  - **破冰淡入**：`disableEntranceAnim` —— 立绘从透明渐变显形的过程（开 → 立绘瞬间显形）
+  - **自动进入对话**：`disableAutoEnterChat` —— 立绘显形后自动跳到对话页（开 → 必须手动点击精灵）
+  - **打字机效果**：`disableTypewriter` —— 精灵消息逐字出现并闪烁光标（开 → 消息一次性显示）
+  - **骨架屏**：`disableSkeleton` —— 生成等待时的流光占位（开 → 退化为空 SizedBox）
+  - 架构：新建 `lib/preferences.dart`（PreferencesService 单例 + 4 个 ValueNotifier + SharedPreferences 持久化）、`lib/settings_page.dart`（4 个 SwitchListTile 卡片 + 暗色调性）。SplashPage 右上角齿轮 `Icons.tune_rounded` 进入。重启 App 后状态保留。
+- **v2.3-C-1 阶段判定模型**（宪法第二条落地的第一块，3 个子迭代完成）：
+  - **C-1a · MemoryEvent 加 stage 字段**：新建 `enum GriefStage { grieving, transitioning, recovered }`，每条 event 在抽取时打上"当时会话阶段"快照。`toJson` 在 stage=null 时不写字段（向前兼容旧 jsonl），`fromJson` 容错未知字符串为 null，`copyWith` 加 `clearStage` 显式置 null 退出路径。`renderForPrompt` 在 stage 非 null 时附加 `[阶段:xxx]` 标签。
+  - **C-1b · 新建 `StageClassifier`**：从最近 12 条对话（6 轮 user+assistant）用 LLM 推断当前会话阶段。节流：每 6 轮 user 消息触发一次（避免每轮调 LLM）。失败静默吞掉 + 推进游标（不卡在同一处反复触发）。写入 `meta.currentStage` / `currentStageConfidence` / `currentStageAt` / `lastStageClassifyMsgCount` 四个字段。提供 `readLast()` 对外读当前阶段。
+  - **C-1c · extractor 自动写 event.stage**：`runOnce` 抽取事件后从 `meta.currentStage` 读会话阶段，作为快照写到每条 event 的 stage 字段。不让 LLM 在 prompt 里吐 stage（避免 token 浪费 + prompt 复杂化），复用 stage_classifier 已经维护的 meta。
+  - **C-1d · MemoryService 集成**：MemoryService 新增 `stageClassifier` 字段，`maybeRunBackgroundTasks` 加入 stage_classifier 触发（在 extractor 之后跑，保证这次抽取的 events 拿到最新 stage）。新增 `currentStage()` 公开门面方法供 C-2 / C-3 消费。
+- **v2.3 启动补丁 SpiritView 强制眨眼**（修 v2.2-H 已知问题）：SpiritView 新增 `forceBlinkToken` 参数。SpiritScenePage 在立绘完全显形那一瞬（破冰淡入完成 = t=800ms）`_blinkToken++`，SpiritView 检测到 token 变大立即眨一次眼，并重置下一次自然眨眼的计时。彻底解决"刚醒过来"靠自然眨眼碰巧命中的不稳定。
+
+### Tests
+
+- `[13/13]` MemoryEvent.stage 字段双向兼容（v2.3-C-1a）：覆盖默认值 / 序列化 / 反序列化 / 容错未知字符串 / copyWith / clearStage / renderForPrompt 标签 7 项行为
+- `[14/14]` StageClassifier 节流 + meta 写入 + 容错（v2.3-C-1b）：覆盖初始不触发 / 消息不足 / readLast 无 meta 返回 null / 解析已知 stage / 容错未知 stage / shouldRunNow 节流窗口 / 失败时推进游标 7 项行为
+- `[15/15]` MemoryService 集成 stageClassifier + currentStage() 暴露（v2.3-C-1d）：覆盖 stageClassifier 字段暴露 / currentStage() 无 meta 返回 null / currentStage() 写后读回 3 项行为
+
+### Notes
+
+- **宪法前提（v2.3-C 整个阶段的核心）**：
+  1. **不主动问用户"你现在哪一阶段"**——阶段是系统从对话行为推断的内部状态
+  2. **不在产品 UI 暴露为标签 / 不打分**——C-3 才决定温和呈现方式（SettingsPage 只读卡片，绝不显示"健康评分"）
+  3. **失败时保留旧 stage，不清空**——避免 UI 闪烁，让用户感知稳定
+- **跨精灵记忆隔离已确认无需修复**：`MemoryStore(spiritId)` 把每个 spirit 锁在 `<root>/Lumora/agents/<spiritId>/` 独立目录里，retriever 拿到的 `store.readAllEvents()` 只会读到当前 spirit 的事件。MemoryEvent 字段里没有 spiritId——目录路径本身就是边界。
+- **v2.2-H 已知问题已修复**：v2.2-summary 列的"未实现 SpiritView 强制睁眼"现已实现（见上）。
 
 ### Added
 

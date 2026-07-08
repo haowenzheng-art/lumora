@@ -5,6 +5,7 @@ import '../voice.dart';
 import 'decay.dart';
 import 'extractor.dart';
 import 'retriever.dart';
+import 'stage_classifier.dart';
 import 'store.dart';
 import 'types.dart';
 
@@ -24,6 +25,9 @@ class MemoryService {
   final MemoryExtractor extractor;
   final MemoryRetriever retriever;
   final MemoryDecay decay;
+
+  /// v2.3-C：会话级阶段推断器（从最近 N 条对话推断用户当前阶段）
+  final StageClassifier stageClassifier;
 
   bool _busy = false;
 
@@ -49,6 +53,9 @@ class MemoryService {
           store: MemoryStore(spiritId, baseDirOverride: baseDirOverride),
           softLimit: activeSoftLimit,
           hardLimit: activeHardLimit,
+        ),
+        stageClassifier = StageClassifier(
+          store: MemoryStore(spiritId, baseDirOverride: baseDirOverride),
         );
 
   Future<void> appendUserMessage(String content) async {
@@ -91,6 +98,11 @@ class MemoryService {
         if (await extractor.shouldRunNow()) {
           await extractor.runOnce();
         }
+        // v2.3-C：阶段推断——每 N 轮 user 消息触发，写 meta.currentStage
+        // 注意：必须在 extractor 之后跑（这样这次抽取的 events 能拿到最新 stage）
+        if (await stageClassifier.shouldRunNow()) {
+          await stageClassifier.runOnce();
+        }
         await decay.runOnce();
       } catch (_) {
         // 静默吞掉，不能影响聊天主路径
@@ -99,6 +111,10 @@ class MemoryService {
       }
     });
   }
+
+  /// v2.3-C：读当前会话阶段（null = 未触发推断或推断失败）
+  /// C-2 健康留存度量 + C-3 UI 接入都消费这个。
+  Future<StageClassification?> currentStage() => stageClassifier.readLast();
 
   /// 读取 L1 profile
   Future<String> readProfile() => store.readProfile();

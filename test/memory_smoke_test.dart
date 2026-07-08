@@ -747,5 +747,29 @@ weight: 中
     expect(meta['lastStageClassifyMsgCount'], isNotNull,
         reason: '失败时也应推进游标，避免反复触发');
   });
+
+  // v2.3-C MemoryService 集成（[15/15]）—— stageClassifier 在 facade 上能用
+  test('[15/15] MemoryService 集成 stageClassifier + currentStage() 暴露（v2.3-C-1d）', () async {
+    final mem = MemoryService(spiritId: 'test_spirit_ms', baseDirOverride: tmp);
+
+    // 1) stageClassifier 是 MemoryService 字段（facade 暴露）
+    expect(mem.stageClassifier, isNotNull,
+        reason: 'MemoryService 应暴露 stageClassifier 字段');
+
+    // 2) currentStage() 在没有 meta 时返回 null（不抛错）
+    final cur0 = await mem.currentStage();
+    expect(cur0, isNull, reason: '无 meta 应返回 null');
+
+    // 3) 直接写 meta 后 currentStage() 应能读回（验证门面打通）
+    await mem.store.patchMeta({
+      'currentStage': 'grieving',
+      'currentStageConfidence': 0.85,
+      'currentStageAt': 1700000000000,
+    });
+    final cur1 = await mem.currentStage();
+    expect(cur1, isNotNull);
+    expect(cur1!.stage, GriefStage.grieving);
+    expect(cur1.confidence, closeTo(0.85, 0.001));
+  });
 }
 
