@@ -604,5 +604,88 @@ weight: 中
     expect(meta['lastSeenAt'], 12345, reason: 'voice 写入不影响 lastSeenAt');
     expect(meta['voicePreset'], '沉稳男声');
   });
+
+  // v2.3-C 阶段判定字段（[13/13]）—— 验证 GriefStage 字段的双向兼容
+  test('[13/13] MemoryEvent.stage 字段双向兼容（v2.3-C）', () {
+    // 1) 默认 stage = null（旧数据兼容）
+    final base = MemoryEvent(
+      id: 'abc',
+      source: EventSource.derived,
+      date: '2026-07-08',
+      title: '今天去了奶茶店',
+      summary: '跟同事一起，点了半糖去冰',
+      tags: ['奶茶', '同事'],
+      weight: '中',
+      createdAt: 1,
+      lastUsedAt: 0,
+      dormant: false,
+      permadormant: false,
+    );
+    expect(base.stage, isNull, reason: '默认 stage 应为 null');
+
+    // 2) toJson 不写 stage（向后兼容：旧 jsonl 文件不带 stage 字段）
+    final j1 = base.toJson();
+    expect(j1.containsKey('stage'), isFalse,
+        reason: 'stage=null 时 toJson 不应写入 stage 字段');
+
+    // 3) 显式传 stage → toJson 写出对应字符串
+    final grieving = base.copyWith(stage: GriefStage.grieving);
+    final j2 = grieving.toJson();
+    expect(j2['stage'], 'grieving',
+        reason: 'stage=grieving 应序列化为 "grieving"');
+
+    // 4) fromJson 解析正常值
+    final roundTrip = MemoryEvent.fromJson({
+      ...j2,
+      'source': 'derived',
+      'kind': 'regular',
+    });
+    expect(roundTrip.stage, GriefStage.grieving,
+        reason: 'fromJson 应能反序列化 stage');
+
+    // 5) fromJson 容错：未知字符串 / null / 缺失都返回 null（不崩）
+    final fallback = MemoryEvent.fromJson({
+      'id': 'x',
+      'source': 'derived',
+      'date': '',
+      'title': 't',
+      'summary': 's',
+      'tags': [],
+      'weight': '中',
+      'createdAt': 0,
+      'lastUsedAt': 0,
+      'dormant': false,
+      'permadormant': false,
+      'stage': 'unknown_future_stage',
+    });
+    expect(fallback.stage, isNull, reason: '未知 stage 字符串应容错为 null');
+
+    final missing = MemoryEvent.fromJson({
+      'id': 'x',
+      'source': 'derived',
+      'date': '',
+      'title': 't',
+      'summary': 's',
+      'tags': [],
+      'weight': '中',
+      'createdAt': 0,
+      'lastUsedAt': 0,
+      'dormant': false,
+      'permadormant': false,
+    });
+    expect(missing.stage, isNull, reason: '缺失 stage 字段应解析为 null');
+
+    // 6) copyWith clearStage=true 显式置 null（stage 是 nullable，必须给退出路径）
+    final clearTest = grieving.copyWith(clearStage: true);
+    expect(clearTest.stage, isNull, reason: 'clearStage=true 应把 stage 置 null');
+
+    // 7) renderForPrompt 在 stage 非 null 时附加阶段标签
+    final rendered = grieving.renderForPrompt();
+    expect(rendered.contains('[阶段:grieving]'), isTrue,
+        reason: 'stage 非 null 时 renderForPrompt 应附加阶段标签');
+    final renderedNull = base.renderForPrompt();
+    expect(renderedNull.contains('[阶段:'), isFalse,
+        reason: 'stage=null 时 renderForPrompt 不应附加阶段标签');
+  });
 }
 
